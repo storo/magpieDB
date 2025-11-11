@@ -118,6 +118,8 @@ func (m *MVCCManager) CreateVersion(txID uint64, id string, vector []float32, me
 }
 
 // GetVisibleVersion returns the version visible to the given transaction
+// Returns a deep copy to prevent race conditions when the version chain is modified.
+// Related to Issue #1: https://github.com/storo/magpieDB/issues/1
 func (m *MVCCManager) GetVisibleVersion(id string, tx *MVCCTransaction) *MVCCVersion {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -135,12 +137,45 @@ func (m *MVCCManager) GetVisibleVersion(id string, tx *MVCCTransaction) *MVCCVer
 		// 2. Not deleted before our snapshot
 		if version.CreatedByTx <= tx.SnapshotTxID {
 			if version.DeletedByTx == 0 || version.DeletedByTx > tx.SnapshotTxID {
-				return version
+				// Return a deep copy to avoid race conditions
+				return m.copyVersion(version)
 			}
 		}
 	}
 
 	return nil
+}
+
+// copyVersion creates a deep copy of an MVCCVersion
+// This prevents race conditions when returning versions from the live chain
+func (m *MVCCManager) copyVersion(v *MVCCVersion) *MVCCVersion {
+	if v == nil {
+		return nil
+	}
+
+	// Copy vector data
+	vectorCopy := make([]float32, len(v.Vector))
+	copy(vectorCopy, v.Vector)
+
+	// Copy metadata
+	var metadataCopy map[string]interface{}
+	if v.Metadata != nil {
+		metadataCopy = make(map[string]interface{}, len(v.Metadata))
+		for k, val := range v.Metadata {
+			metadataCopy[k] = val
+		}
+	}
+
+	// Return copy without NextVersion pointer (isolate from live chain)
+	return &MVCCVersion{
+		ID:          v.ID,
+		Vector:      vectorCopy,
+		Metadata:    metadataCopy,
+		Version:     v.Version,
+		CreatedByTx: v.CreatedByTx,
+		DeletedByTx: v.DeletedByTx,
+		NextVersion: nil, // Important: don't link to live chain
+	}
 }
 
 // GetVersionChain returns the version chain for a given ID
