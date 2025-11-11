@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -1077,7 +1078,7 @@ func cleanupTestNest(nest *Nest) {
 
 func createTempPath(t testing.TB) string {
 	t.Helper()
-	return fmt.Sprintf("/tmp/magpie_batch_test_%d_%d.db", time.Now().UnixNano(), rand.Int())
+	return filepath.Join(os.TempDir(), fmt.Sprintf("magpie_batch_test_%d_%d.db", time.Now().UnixNano(), rand.Int()))
 }
 
 func cleanupPath(path string) {

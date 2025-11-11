@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -707,7 +708,7 @@ func TestWorkerIntervals(t *testing.T) {
 }
 
 func TestGracefulShutdownNoDataLoss(t *testing.T) {
-	path := fmt.Sprintf("/tmp/magpie-test-shutdown-%d.db", time.Now().UnixNano())
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("magpie-test-shutdown-%d.db", time.Now().UnixNano()))
 
 	opts := DefaultOptions()
 	opts.Dimensions = 128
@@ -983,7 +984,7 @@ func createTestDatabaseWithWAL(t *testing.T) *Nest {
 }
 
 func createTestDatabaseWithOptions(t *testing.T, opts Options) (*Nest, error) {
-	path := fmt.Sprintf("/tmp/magpie-test-workers-%d.db", time.Now().UnixNano())
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("magpie-test-workers-%d.db", time.Now().UnixNano()))
 	nest, err := Open(path, opts)
 	if err != nil {
 		return nil, err
@@ -1160,7 +1161,7 @@ func TestReindexWorkerConcurrentAccess(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestBackupWorkerInitialization(t *testing.T) {
-	worker := NewBackupWorker(6*time.Hour, "/tmp/backups", 5)
+	worker := NewBackupWorker(6*time.Hour, filepath.Join(os.TempDir(), "backups"), 5)
 	if worker == nil {
 		t.Fatal("NewBackupWorker returned nil")
 	}
@@ -1178,7 +1179,7 @@ func TestBackupWorkerCreatesBackup(t *testing.T) {
 	nest := createTestDatabase(t)
 	defer nest.Close()
 
-	backupDir := fmt.Sprintf("/tmp/magpie_backup_test_%d", time.Now().UnixNano())
+	backupDir := filepath.Join(os.TempDir(), fmt.Sprintf("magpie_backup_test_%d", time.Now().UnixNano()))
 	defer os.RemoveAll(backupDir)
 	_ = os.MkdirAll(backupDir, 0755)
 
@@ -1215,7 +1216,7 @@ func TestBackupWorkerRotation(t *testing.T) {
 	nest := createTestDatabase(t)
 	defer nest.Close()
 
-	backupDir := fmt.Sprintf("/tmp/magpie_backup_rotation_%d", time.Now().UnixNano())
+	backupDir := filepath.Join(os.TempDir(), fmt.Sprintf("magpie_backup_rotation_%d", time.Now().UnixNano()))
 	defer os.RemoveAll(backupDir)
 	_ = os.MkdirAll(backupDir, 0755)
 
@@ -1242,7 +1243,7 @@ func TestBackupWorkerRestore(t *testing.T) {
 	opts.Dimensions = 128
 	opts.WAL = false
 
-	path := fmt.Sprintf("/tmp/magpie_backup_orig_%d.db", time.Now().UnixNano())
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("magpie_backup_orig_%d.db", time.Now().UnixNano()))
 	nest, err := Open(path, opts)
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
@@ -1256,7 +1257,7 @@ func TestBackupWorkerRestore(t *testing.T) {
 	}
 
 	// Create backup
-	backupDir := fmt.Sprintf("/tmp/magpie_backup_restore_%d", time.Now().UnixNano())
+	backupDir := filepath.Join(os.TempDir(), fmt.Sprintf("magpie_backup_restore_%d", time.Now().UnixNano()))
 	defer os.RemoveAll(backupDir)
 	_ = os.MkdirAll(backupDir, 0755)
 
@@ -1292,7 +1293,7 @@ func TestBackupWorkerWithConcurrentWrites(t *testing.T) {
 	nest := createTestDatabase(t)
 	defer nest.Close()
 
-	backupDir := fmt.Sprintf("/tmp/magpie_backup_concurrent_%d", time.Now().UnixNano())
+	backupDir := filepath.Join(os.TempDir(), fmt.Sprintf("magpie_backup_concurrent_%d", time.Now().UnixNano()))
 	defer os.RemoveAll(backupDir)
 	_ = os.MkdirAll(backupDir, 0755)
 
@@ -1330,7 +1331,7 @@ func TestBackupWorkerWithConcurrentWrites(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestStatisticsWorkerInitialization(t *testing.T) {
-	worker := NewStatisticsWorker(5*time.Minute, "/tmp/stats.json")
+	worker := NewStatisticsWorker(5*time.Minute, filepath.Join(os.TempDir(), "stats.json"))
 	if worker == nil {
 		t.Fatal("NewStatisticsWorker returned nil")
 	}
@@ -1348,7 +1349,7 @@ func TestStatisticsWorkerCollectsStats(t *testing.T) {
 	nest := createTestDatabase(t)
 	defer nest.Close()
 
-	statsPath := fmt.Sprintf("/tmp/magpie_stats_test_%d.json", time.Now().UnixNano())
+	statsPath := filepath.Join(os.TempDir(), fmt.Sprintf("magpie_stats_test_%d.json", time.Now().UnixNano()))
 	defer os.Remove(statsPath)
 
 	// Add data and perform operations
@@ -1393,7 +1394,7 @@ func TestStatisticsWorkerExportsJSON(t *testing.T) {
 	nest := createTestDatabase(t)
 	defer nest.Close()
 
-	statsPath := fmt.Sprintf("/tmp/magpie_stats_json_%d.json", time.Now().UnixNano())
+	statsPath := filepath.Join(os.TempDir(), fmt.Sprintf("magpie_stats_json_%d.json", time.Now().UnixNano()))
 	defer os.Remove(statsPath)
 
 	// Add some data
@@ -1428,7 +1429,7 @@ func TestStatisticsWorkerMetricsAccuracy(t *testing.T) {
 	nest := createTestDatabase(t)
 	defer nest.Close()
 
-	statsPath := fmt.Sprintf("/tmp/magpie_stats_accuracy_%d.json", time.Now().UnixNano())
+	statsPath := filepath.Join(os.TempDir(), fmt.Sprintf("magpie_stats_accuracy_%d.json", time.Now().UnixNano()))
 	defer os.Remove(statsPath)
 
 	// Add known amount of data
@@ -1462,7 +1463,7 @@ func TestStatisticsWorkerWithHighLoad(t *testing.T) {
 	nest := createTestDatabase(t)
 	defer nest.Close()
 
-	statsPath := fmt.Sprintf("/tmp/magpie_stats_load_%d.json", time.Now().UnixNano())
+	statsPath := filepath.Join(os.TempDir(), fmt.Sprintf("magpie_stats_load_%d.json", time.Now().UnixNano()))
 	defer os.Remove(statsPath)
 
 	// High load: concurrent operations

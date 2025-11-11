@@ -3,13 +3,14 @@ package magpie
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
 // TestPersistVector tests writing a vector to a vector page
 func TestPersistVector(t *testing.T) {
 	// Create temporary database
-	path := "/tmp/test_persist_vector.magpie"
+	path := filepath.Join(os.TempDir(), "test_persist_vector.magpie")
 	defer os.Remove(path)
 
 	opts := DefaultOptions()
@@ -46,7 +47,7 @@ func TestPersistVector(t *testing.T) {
 
 // TestLoadVector tests reading a vector from a page
 func TestLoadVector(t *testing.T) {
-	path := "/tmp/test_load_vector.magpie"
+	path := filepath.Join(os.TempDir(), "test_load_vector.magpie")
 	defer os.Remove(path)
 
 	opts := DefaultOptions()
@@ -108,7 +109,7 @@ func TestLoadVector(t *testing.T) {
 
 // TestVectorRoundTrip tests that Store + Load = same vector
 func TestVectorRoundTrip(t *testing.T) {
-	path := "/tmp/test_roundtrip.magpie"
+	path := filepath.Join(os.TempDir(), "test_roundtrip.magpie")
 	defer os.Remove(path)
 
 	opts := DefaultOptions()
@@ -151,7 +152,7 @@ func TestVectorRoundTrip(t *testing.T) {
 
 // TestMultipleVectorsOnePage tests packing multiple small vectors per page
 func TestMultipleVectorsOnePage(t *testing.T) {
-	path := "/tmp/test_multiple.magpie"
+	path := filepath.Join(os.TempDir(), "test_multiple.magpie")
 	defer os.Remove(path)
 
 	opts := DefaultOptions()
@@ -203,7 +204,7 @@ func TestMultipleVectorsOnePage(t *testing.T) {
 
 // TestVectorWithMetadata tests vector + metadata persistence together
 func TestVectorWithMetadata(t *testing.T) {
-	path := "/tmp/test_metadata.magpie"
+	path := filepath.Join(os.TempDir(), "test_metadata.magpie")
 	defer os.Remove(path)
 
 	opts := DefaultOptions()
@@ -263,7 +264,7 @@ func TestVectorWithMetadata(t *testing.T) {
 
 // TestEmptyMetadata tests storing vectors without metadata
 func TestEmptyMetadata(t *testing.T) {
-	path := "/tmp/test_empty_meta.magpie"
+	path := filepath.Join(os.TempDir(), "test_empty_meta.magpie")
 	defer os.Remove(path)
 
 	opts := DefaultOptions()
@@ -304,7 +305,7 @@ func TestEmptyMetadata(t *testing.T) {
 
 // TestVectorPersistenceAcrossRestart tests that vectors survive database restart
 func TestVectorPersistenceAcrossRestart(t *testing.T) {
-	path := "/tmp/test_restart.magpie"
+	path := filepath.Join(os.TempDir(), "test_restart.magpie")
 	defer os.Remove(path)
 
 	// First session: store vectors
@@ -382,7 +383,7 @@ func TestVectorPersistenceAcrossRestart(t *testing.T) {
 
 // Test1000VectorsPersistence tests storing and loading 1000 vectors
 func Test1000VectorsPersistence(t *testing.T) {
-	path := "/tmp/test_1000_vectors.magpie"
+	path := filepath.Join(os.TempDir(), "test_1000_vectors.magpie")
 	defer os.Remove(path)
 
 	opts := DefaultOptions()
@@ -462,7 +463,7 @@ func Test1000VectorsPersistence(t *testing.T) {
 
 // TestLargeVector tests storing vectors larger than a single page
 func TestLargeVector(t *testing.T) {
-	path := "/tmp/test_large_vector.magpie"
+	path := filepath.Join(os.TempDir(), "test_large_vector.magpie")
 	defer os.Remove(path)
 
 	// 2048 dimensions * 4 bytes = 8KB (needs 2+ pages)
@@ -522,7 +523,7 @@ func TestLargeVector(t *testing.T) {
 
 // TestVectorUpdate tests updating an existing vector
 func TestVectorUpdate(t *testing.T) {
-	path := "/tmp/test_update.magpie"
+	path := filepath.Join(os.TempDir(), "test_update.magpie")
 	defer os.Remove(path)
 
 	opts := DefaultOptions()

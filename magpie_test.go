@@ -3,6 +3,7 @@ package magpie
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -458,5 +459,5 @@ func TestIntegration(t *testing.T) {
 
 // Helper function to generate temp filename
 func tempFilename() string {
-	return fmt.Sprintf("/tmp/magpie_test_%d.magpie", os.Getpid())
+	return filepath.Join(os.TempDir(), fmt.Sprintf("magpie_test_%d.magpie", os.Getpid()))
 }
