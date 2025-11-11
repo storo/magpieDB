@@ -99,6 +99,8 @@ func (s *Storage) AllocatePage() (uint64, error) {
 }
 
 // Close unmaps the memory and closes the file.
+// This method is idempotent and can be called multiple times safely.
+// The Storage owns the file descriptor and is responsible for closing it.
 func (s *Storage) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

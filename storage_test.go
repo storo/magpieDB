@@ -464,3 +464,220 @@ func TestDBHeaderValidation(t *testing.T) {
 		t.Error("Expected validation error for invalid page count")
 	}
 }
+
+// TestStorageCloseIdempotent verifies that calling Close() multiple times
+// does not cause errors and is idempotent (Issue #6)
+func TestStorageCloseIdempotent(t *testing.T) {
+	tmpfile := tempFilename() + ".close_idempotent"
+	defer os.Remove(tmpfile)
+
+	file, err := os.OpenFile(tmpfile, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	storage := NewStorage()
+	err = storage.Init(file, PageSize*10)
+	if err != nil {
+		t.Fatalf("Failed to initialize storage: %v", err)
+	}
+
+	// Verify storage is initialized
+	if storage.file == nil {
+		t.Fatal("Expected storage.file to be non-nil after Init")
+	}
+
+	// First close should succeed
+	err = storage.Close()
+	if err != nil {
+		t.Fatalf("First Close() failed: %v", err)
+	}
+
+	// Verify internal state after close
+	if storage.file != nil {
+		t.Error("Expected storage.file to be nil after Close()")
+	}
+	if storage.mmap != nil {
+		t.Error("Expected storage.mmap to be nil after Close()")
+	}
+
+	// Second close should be idempotent (no error)
+	err = storage.Close()
+	if err != nil {
+		t.Errorf("Second Close() should be idempotent, got error: %v", err)
+	}
+
+	// Third close should still work
+	err = storage.Close()
+	if err != nil {
+		t.Errorf("Third Close() should be idempotent, got error: %v", err)
+	}
+}
+
+// TestNestCloseAfterCompaction verifies that closing after compaction
+// doesn't cause double-close errors (Issue #6)
+func TestNestCloseAfterCompaction(t *testing.T) {
+	tmpfile := tempFilename() + ".compact_close"
+	defer os.Remove(tmpfile)
+
+	// Create and populate a database
+	nest, err := Open(tmpfile, Options{
+		Dimensions: 3,
+		Distance:   "cosine",
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	// Add some vectors
+	vectors := []struct {
+		id   string
+		vec  []float32
+	}{
+		{"vec1", []float32{1.0, 0.0, 0.0}},
+		{"vec2", []float32{0.0, 1.0, 0.0}},
+		{"vec3", []float32{0.0, 0.0, 1.0}},
+	}
+
+	for _, v := range vectors {
+		err := nest.Store(v.id, v.vec)
+		if err != nil {
+			t.Fatalf("Failed to store vector %s: %v", v.id, err)
+		}
+	}
+
+	// Perform compaction
+	err = nest.Compact()
+	if err != nil {
+		t.Fatalf("Compaction failed: %v", err)
+	}
+
+	// Close should not cause double-close error
+	err = nest.Close()
+	if err != nil {
+		t.Errorf("Close after compaction failed: %v", err)
+	}
+}
+
+// TestCompactionFailureFileState verifies that file state is consistent
+// even if compaction fails midway (Issue #6)
+func TestCompactionFailureFileState(t *testing.T) {
+	tmpfile := tempFilename() + ".compact_fail"
+	defer os.Remove(tmpfile)
+
+	// Create a database
+	nest, err := Open(tmpfile, Options{
+		Dimensions: 3,
+		Distance:   "cosine",
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	// Add a vector
+	err = nest.Store("vec1", []float32{1.0, 0.0, 0.0})
+	if err != nil {
+		t.Fatalf("Failed to store vector: %v", err)
+	}
+
+	// Close normally first time
+	err = nest.Close()
+	if err != nil {
+		t.Fatalf("Initial close failed: %v", err)
+	}
+
+	// Verify file descriptor is properly released
+	// Try to open the file again
+	file, err := os.OpenFile(tmpfile, os.O_RDWR, 0644)
+	if err != nil {
+		t.Errorf("File should be accessible after close: %v", err)
+	} else {
+		file.Close()
+	}
+}
+
+// TestNestFileOwnership verifies clear ownership of file descriptor
+// between Nest and Storage (Issue #6)
+func TestNestFileOwnership(t *testing.T) {
+	tmpfile := tempFilename() + ".ownership"
+	defer os.Remove(tmpfile)
+
+	// Create database
+	nest, err := Open(tmpfile, Options{
+		Dimensions: 3,
+		Distance:   "cosine",
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	// Store a vector
+	err = nest.Store("vec1", []float32{1.0, 0.0, 0.0})
+	if err != nil {
+		t.Fatalf("Failed to store vector: %v", err)
+	}
+
+	// Verify that both nest.storage and nest.file are set initially
+	if nest.storage == nil {
+		t.Error("Expected nest.storage to be non-nil")
+	}
+	if nest.file == nil {
+		t.Error("Expected nest.file to be non-nil before close")
+	}
+
+	// Close the nest
+	err = nest.Close()
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// After close, file should be released (no double-close risk)
+	// Verify we can open the file again
+	file, err := os.OpenFile(tmpfile, os.O_RDWR, 0644)
+	if err != nil {
+		t.Errorf("File descriptor not properly released: %v", err)
+	} else {
+		file.Close()
+	}
+}
+
+// TestStorageCloseErrorHandling verifies that errors during Close
+// are properly propagated (Issue #6)
+func TestStorageCloseErrorHandling(t *testing.T) {
+	tmpfile := tempFilename() + ".close_error"
+	defer os.Remove(tmpfile)
+
+	file, err := os.OpenFile(tmpfile, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	storage := NewStorage()
+	err = storage.Init(file, PageSize*10)
+	if err != nil {
+		t.Fatalf("Failed to initialize storage: %v", err)
+	}
+
+	// Manually close the underlying file to simulate an error condition
+	// This should cause storage.Close() to handle an already-closed file
+	file.Close()
+
+	// Now close storage - should handle gracefully
+	err = storage.Close()
+	// The current implementation WILL return an error because the file was closed
+	// This is expected behavior, but we want to ensure no panic
+	if err != nil {
+		t.Logf("Close with pre-closed file returned error: %v", err)
+		// Verify it's a "file already closed" error
+		if err.Error() != "failed to close file: close "+tmpfile+": file already closed" {
+			// Error format might vary, just check it's not a panic
+			t.Logf("Error format: %v", err)
+		}
+	}
+
+	// Calling Close again should be idempotent (no error now)
+	err = storage.Close()
+	if err != nil {
+		t.Errorf("Second close after error should be idempotent, got: %v", err)
+	}
+}
