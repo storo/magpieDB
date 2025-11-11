@@ -142,7 +142,7 @@ func TestHNSWSearchMultipleResults(t *testing.T) {
 		for j := range vector {
 			vector[j] = rand.Float32()
 		}
-		idx.Add(fmt.Sprintf("vec%d", i), vector)
+		_ = idx.Add(fmt.Sprintf("vec%d", i), vector)
 	}
 
 	// Create query vector
@@ -225,7 +225,7 @@ func TestHNSWSearchDifferentDimensions(t *testing.T) {
 				for j := range vector {
 					vector[j] = rand.Float32()
 				}
-				idx.Add(fmt.Sprintf("vec%d", i), vector)
+				_ = idx.Add(fmt.Sprintf("vec%d", i), vector)
 			}
 
 			// Search
@@ -257,7 +257,7 @@ func TestHNSWLevelAssignment(t *testing.T) {
 		}
 
 		id := fmt.Sprintf("vec%d", i)
-		idx.Add(id, vector)
+		_ = idx.Add(id, vector)
 
 		node, _ := idx.Get(id)
 		levelCounts[node.Level]++
@@ -292,7 +292,7 @@ func TestHNSWRemove(t *testing.T) {
 		for j := range vector {
 			vector[j] = rand.Float32()
 		}
-		idx.Add(fmt.Sprintf("vec%d", i), vector)
+		_ = idx.Add(fmt.Sprintf("vec%d", i), vector)
 	}
 
 	// Remove one
@@ -327,7 +327,7 @@ func TestHNSWClear(t *testing.T) {
 		for j := range vector {
 			vector[j] = rand.Float32()
 		}
-		idx.Add(fmt.Sprintf("vec%d", i), vector)
+		_ = idx.Add(fmt.Sprintf("vec%d", i), vector)
 	}
 
 	if idx.Count() != 10 {
@@ -360,7 +360,7 @@ func TestHNSWSerializeDeserialize(t *testing.T) {
 		}
 		id := fmt.Sprintf("vec%d", i)
 		vectors[id] = vector
-		idx1.Add(id, vector)
+		_ = idx1.Add(id, vector)
 	}
 
 	// Serialize
@@ -479,7 +479,7 @@ func TestHNSWConcurrentReads(t *testing.T) {
 		for j := range vector {
 			vector[j] = rand.Float32()
 		}
-		idx.Add(fmt.Sprintf("vec%d", i), vector)
+		_ = idx.Add(fmt.Sprintf("vec%d", i), vector)
 	}
 
 	// Concurrent searches
@@ -519,7 +519,7 @@ func BenchmarkHNSWAdd(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		idx.Add(fmt.Sprintf("vec%d", i), vectors[i])
+		_ = idx.Add(fmt.Sprintf("vec%d", i), vectors[i])
 	}
 }
 
@@ -533,7 +533,7 @@ func BenchmarkHNSWSearch(b *testing.B) {
 		for j := range vector {
 			vector[j] = rand.Float32()
 		}
-		idx.Add(fmt.Sprintf("vec%d", i), vector)
+		_ = idx.Add(fmt.Sprintf("vec%d", i), vector)
 	}
 
 	// Create query vectors

@@ -28,7 +28,7 @@ func TestMVCC100ConcurrentTransactions(t *testing.T) {
 	// Pre-populate with 500 vectors (increased to reduce contention)
 	for i := 0; i < 500; i++ {
 		id := fmt.Sprintf("vec%d", i)
-		nest.Store(id, []float32{float32(i), float32(i), float32(i)})
+		_ = nest.Store(id, []float32{float32(i), float32(i), float32(i)})
 	}
 
 	var wg sync.WaitGroup
@@ -53,7 +53,7 @@ func TestMVCC100ConcurrentTransactions(t *testing.T) {
 				vecID := fmt.Sprintf("vec%d", rand.Intn(500))
 				if err := tx.Store(vecID, []float32{float32(id), float32(j), 0}); err != nil {
 					atomic.AddInt32(&errorCount, 1)
-					tx.Rollback()
+					_ = tx.Rollback()
 					return
 				}
 			}
@@ -109,7 +109,7 @@ func TestMVCCHighContention(t *testing.T) {
 	defer nest.Close()
 
 	// Single hot vector
-	nest.Store("hot", []float32{0, 0})
+	_ = nest.Store("hot", []float32{0, 0})
 
 	var wg sync.WaitGroup
 	attempts := 50
@@ -128,7 +128,7 @@ func TestMVCCHighContention(t *testing.T) {
 				return
 			}
 
-			tx.Store("hot", []float32{float32(val), float32(val * 2)})
+			_ = tx.Store("hot", []float32{float32(val), float32(val * 2)})
 
 			if err := tx.Commit(); err != nil {
 				atomic.AddInt32(&conflictCount, 1)
@@ -179,7 +179,7 @@ func TestMVCCLongRunningWithGC(t *testing.T) {
 	}
 	defer nest.Close()
 
-	nest.Store("vec1", []float32{0, 0})
+	_ = nest.Store("vec1", []float32{0, 0})
 
 	// Start long-running reader
 	longTx, err := nest.Begin()
@@ -198,8 +198,8 @@ func TestMVCCLongRunningWithGC(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		tx.Store("vec1", []float32{float32(i), float32(i * 2)})
-		tx.Commit()
+		_ = tx.Store("vec1", []float32{float32(i), float32(i * 2)})
+		_ = tx.Commit()
 	}
 
 	// Long tx should still see original value
@@ -213,7 +213,7 @@ func TestMVCCLongRunningWithGC(t *testing.T) {
 			initialValue.Vector[0], currentValue.Vector[0])
 	}
 
-	longTx.Commit()
+	_ = longTx.Commit()
 
 	// After commit, latest should be visible
 	latest, _ := nest.Get("vec1")
@@ -239,7 +239,7 @@ func TestMVCCMixedWorkload(t *testing.T) {
 
 	// Pre-populate
 	for i := 0; i < 50; i++ {
-		nest.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), 0, 0})
+		_ = nest.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), 0, 0})
 	}
 
 	var wg sync.WaitGroup
@@ -263,11 +263,11 @@ func TestMVCCMixedWorkload(t *testing.T) {
 				}
 
 				for j := 0; j < 10; j++ {
-					tx.Get(fmt.Sprintf("vec%d", rand.Intn(50)))
+					_, _ = tx.Get(fmt.Sprintf("vec%d", rand.Intn(50)))
 					atomic.AddInt64(&readOpCount, 1)
 				}
 
-				tx.Commit()
+				_ = tx.Commit()
 				atomic.AddInt64(&readTxCount, 1)
 			}
 		}()
@@ -286,11 +286,11 @@ func TestMVCCMixedWorkload(t *testing.T) {
 
 				for j := 0; j < 5; j++ {
 					id := fmt.Sprintf("vec%d", rand.Intn(50))
-					tx.Store(id, []float32{rand.Float32(), rand.Float32(), rand.Float32()})
+					_ = tx.Store(id, []float32{rand.Float32(), rand.Float32(), rand.Float32()})
 					atomic.AddInt64(&writeOpCount, 1)
 				}
 
-				tx.Commit()
+				_ = tx.Commit()
 				atomic.AddInt64(&writeTxCount, 1)
 			}
 		}()
@@ -330,7 +330,7 @@ func TestMVCC1000VersionsPerVector(t *testing.T) {
 	// Create 1000 versions of the same vector
 	for i := 0; i < 1000; i++ {
 		tx, _ := nest.Begin()
-		tx.Store("vec1", []float32{float32(i), float32(i % 100)})
+		_ = tx.Store("vec1", []float32{float32(i), float32(i % 100)})
 		if err := tx.Commit(); err != nil {
 			t.Fatalf("Failed at version %d: %v", i, err)
 		}
@@ -369,7 +369,7 @@ func TestMVCCConcurrentReadersScalability(t *testing.T) {
 
 	// Setup data
 	for i := 0; i < 100; i++ {
-		nest.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), 0, 0})
+		_ = nest.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), 0, 0})
 	}
 
 	// Test with increasing reader counts
@@ -385,11 +385,11 @@ func TestMVCCConcurrentReadersScalability(t *testing.T) {
 				defer wg.Done()
 
 				tx, _ := nest.Begin()
-				defer tx.Commit()
+				defer func() { _ = tx.Commit() }()
 
 				// Each reader does 100 reads
 				for j := 0; j < 100; j++ {
-					tx.Get(fmt.Sprintf("vec%d", rand.Intn(100)))
+					_, _ = tx.Get(fmt.Sprintf("vec%d", rand.Intn(100)))
 				}
 			}()
 		}
@@ -459,7 +459,7 @@ func BenchmarkMVCCThroughput(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 100; i++ {
-		nest.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), 0, 0})
+		_ = nest.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), 0, 0})
 	}
 
 	b.ResetTimer()
@@ -469,8 +469,8 @@ func BenchmarkMVCCThroughput(b *testing.B) {
 		for pb.Next() {
 			tx, _ := nest.Begin()
 			id := fmt.Sprintf("vec%d", i%100)
-			tx.Store(id, []float32{float32(i), float32(i), float32(i)})
-			tx.Commit()
+			_ = tx.Store(id, []float32{float32(i), float32(i), float32(i)})
+			_ = tx.Commit()
 			i++
 		}
 	})
@@ -489,14 +489,14 @@ func BenchmarkMVCCLatency(b *testing.B) {
 	}
 	defer nest.Close()
 
-	nest.Store("vec1", []float32{1, 0, 0})
+	_ = nest.Store("vec1", []float32{1, 0, 0})
 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
 		tx, _ := nest.Begin()
-		tx.Get("vec1")
-		tx.Commit()
+		_, _ = tx.Get("vec1")
+		_ = tx.Commit()
 	}
 }
 
@@ -513,7 +513,7 @@ func BenchmarkMVCCReadWrite(b *testing.B) {
 
 	// Pre-populate
 	for i := 0; i < 100; i++ {
-		nest.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), 0, 0})
+		_ = nest.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), 0, 0})
 	}
 
 	b.ResetTimer()
@@ -525,13 +525,13 @@ func BenchmarkMVCCReadWrite(b *testing.B) {
 
 			// 70% reads, 30% writes
 			if i%10 < 7 {
-				tx.Get(fmt.Sprintf("vec%d", i%100))
+				_, _ = tx.Get(fmt.Sprintf("vec%d", i%100))
 			} else {
-				tx.Store(fmt.Sprintf("vec%d", i%100),
+				_ = tx.Store(fmt.Sprintf("vec%d", i%100),
 					[]float32{float32(i), 0, 0})
 			}
 
-			tx.Commit()
+			_ = tx.Commit()
 			i++
 		}
 	})
@@ -548,7 +548,7 @@ func BenchmarkMVCCConflictRate(b *testing.B) {
 	}
 	defer nest.Close()
 
-	nest.Store("hot", []float32{0, 0, 0})
+	_ = nest.Store("hot", []float32{0, 0, 0})
 
 	conflicts := int64(0)
 
@@ -557,7 +557,7 @@ func BenchmarkMVCCConflictRate(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			tx, _ := nest.Begin()
-			tx.Store("hot", []float32{1, 2, 3})
+			_ = tx.Store("hot", []float32{1, 2, 3})
 			if tx.Commit() != nil {
 				atomic.AddInt64(&conflicts, 1)
 			}

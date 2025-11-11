@@ -294,7 +294,7 @@ func BenchmarkCacheHitRate(b *testing.B) {
 		for j := range vec {
 			vec[j] = rand.Float32()
 		}
-		nest.Store(id, vec)
+		_ = nest.Store(id, vec)
 	}
 
 	query := make([]float32, 128)
@@ -332,7 +332,7 @@ func BenchmarkCacheVaryingQueries(b *testing.B) {
 	for i := 0; i < 10000; i++ {
 		id := fmt.Sprintf("vec%d", i)
 		vec := make([]float32, 128)
-		nest.Store(id, vec)
+		_ = nest.Store(id, vec)
 	}
 
 	// Create 50 different queries
@@ -386,10 +386,10 @@ func BenchmarkMixedWorkload1M(b *testing.B) {
 		case op < 9: // Write
 			id := fmt.Sprintf("new_vec_%d", i)
 			vec := make([]float32, 128)
-			nest.Store(id, vec)
+			_ = nest.Store(id, vec)
 		default: // Delete
 			id := fmt.Sprintf("vec%d", rand.Intn(1000000))
-			nest.Remove(id)
+			_ = nest.Remove(id)
 		}
 	}
 }
@@ -439,7 +439,7 @@ func BenchmarkInsertDimensions(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				id := fmt.Sprintf("vec_%d", i)
-				nest.Store(id, vec)
+				_ = nest.Store(id, vec)
 			}
 		})
 	}
@@ -467,7 +467,7 @@ func BenchmarkFileSize1M(b *testing.B) {
 		for j := range vec {
 			vec[j] = rand.Float32()
 		}
-		nest.Store(id, vec)
+		_ = nest.Store(id, vec)
 	}
 
 	nest.Close()

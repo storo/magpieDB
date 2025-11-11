@@ -297,7 +297,7 @@ func TestEmptyMetadata(t *testing.T) {
 		t.Errorf("expected 3 dimensions, got %d", len(loaded))
 	}
 
-	if metadata != nil && len(metadata) > 0 {
+	if len(metadata) > 0 {
 		t.Errorf("expected nil or empty metadata, got %v", metadata)
 	}
 }

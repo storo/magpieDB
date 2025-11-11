@@ -404,7 +404,7 @@ func TestMetricsLatency(t *testing.T) {
 	vector := make([]float32, 128)
 	for i := 0; i < 10; i++ {
 		id := fmt.Sprintf("latency_vec_%d", i)
-		nest.Store(id, vector)
+		_ = nest.Store(id, vector)
 	}
 
 	metrics := nest.GetMetrics()

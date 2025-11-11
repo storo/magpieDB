@@ -403,7 +403,7 @@ func (n *Nest) HealthCheck() (*HealthCheck, error) {
 	}
 
 	// Check header consistency
-	if n.header != nil && n.header.VectorCount >= 0 {
+	if n.header != nil {
 		health.Checks["header"] = true
 	} else {
 		health.Checks["header"] = false
@@ -458,14 +458,14 @@ func (n *Nest) trackSearch(duration time.Duration) {
 }
 
 // trackDelete tracks a delete operation in metrics
-func (n *Nest) trackDelete(duration time.Duration) {
-	if n.metrics == nil {
-		return
-	}
-
-	n.metrics.GetCounter("deletes").Inc()
-	n.metrics.GetHistogram("delete_latency_ms").Record(float64(duration.Milliseconds()))
-}
+// func (n *Nest) trackDelete(duration time.Duration) {
+// 	if n.metrics == nil {
+// 		return
+// 	}
+//
+// 	n.metrics.GetCounter("deletes").Inc()
+// 	n.metrics.GetHistogram("delete_latency_ms").Record(float64(duration.Milliseconds()))
+// }
 
 // trackCompaction tracks a compaction operation in metrics
 func (n *Nest) trackCompaction(duration time.Duration, spaceReclaimed int64) {

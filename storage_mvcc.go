@@ -143,7 +143,7 @@ func (ms *MVCCStorage) GCVersionsOlderThan(oldestActiveTx uint64) int {
 				keptCount++
 			} else {
 				// Can be GC'd
-				ms.storage.FreePage(pageNum)
+				_ = ms.storage.FreePage(pageNum)
 				removed++
 			}
 		}
@@ -260,10 +260,10 @@ func (ms *MVCCStorage) serializeVersionToPage(v *MVCCVersion) ([]byte, error) {
 		binary.LittleEndian.PutUint32(pageData[offset:], uint32(len(metaBytes)))
 		offset += 4
 		copy(pageData[offset:], metaBytes)
-		offset += len(metaBytes)
+		// offset += len(metaBytes)  // Not used after this
 	} else {
 		binary.LittleEndian.PutUint32(pageData[offset:], 0)
-		offset += 4
+		// offset += 4  // Not used after this
 	}
 
 	// Write header with checksum

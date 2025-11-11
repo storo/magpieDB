@@ -81,7 +81,7 @@ func (n *Nest) CompactInternal() error {
 
 	// 8. Handle metadata separately (stored in metadata pages)
 	for _, vec := range liveVectors {
-		if vec.Metadata != nil && len(vec.Metadata) > 0 {
+		if len(vec.Metadata) > 0 {
 			metaJSON, err := json.Marshal(vec.Metadata)
 			if err != nil {
 				return fmt.Errorf("failed to serialize metadata: %w", err)
@@ -152,7 +152,7 @@ func (n *Nest) CompactInternal() error {
 	// 9. Rename temp file to original
 	if err := os.Rename(tempPath, n.path); err != nil {
 		// Try to restore backup
-		os.Rename(backupPath, n.path)
+		_ = os.Rename(backupPath, n.path)
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
@@ -279,29 +279,29 @@ func (n *Nest) GetCompactionStats() map[string]interface{} {
 }
 
 // vacuum is a lighter-weight operation that just removes deleted entries from pages.
-func (n *Nest) vacuum() error {
-	// TODO: Implement vacuum
-	// Walk through pages and remove deleted entries without full compaction
-	return fmt.Errorf("not implemented")
-}
+// func (n *Nest) vacuum() error {
+// 	// TODO: Implement vacuum
+// 	// Walk through pages and remove deleted entries without full compaction
+// 	return fmt.Errorf("not implemented")
+// }
 
 // calculateFragmentation returns the fragmentation ratio (0.0 to 1.0)
 // Fragmentation is calculated as: (current_size - estimated_optimal_size) / current_size
-func (n *Nest) calculateFragmentation() float64 {
-	currentSize := n.storage.Size()
-	if currentSize == 0 {
-		return 0.0
-	}
-
-	estimatedSize := n.estimateSize()
-	if estimatedSize >= currentSize {
-		return 0.0
-	}
-
-	// Fragmentation = wasted space / total space
-	wastedSpace := currentSize - estimatedSize
-	return float64(wastedSpace) / float64(currentSize)
-}
+// func (n *Nest) calculateFragmentation() float64 {
+// 	currentSize := n.storage.Size()
+// 	if currentSize == 0 {
+// 		return 0.0
+// 	}
+//
+// 	estimatedSize := n.estimateSize()
+// 	if estimatedSize >= currentSize {
+// 		return 0.0
+// 	}
+//
+// 	// Fragmentation = wasted space / total space
+// 	wastedSpace := currentSize - estimatedSize
+// 	return float64(wastedSpace) / float64(currentSize)
+// }
 
 // storeMetadataInStorage stores metadata in a storage page
 // TODO: Implement proper metadata storage
@@ -312,7 +312,7 @@ func storeMetadataInStorage(storage *Storage, data []byte) (uint64, error) {
 
 // writeVectorToStoragePage writes a vector entry to a storage page
 // TODO: Implement proper vector writing
-func writeVectorToStoragePage(storage *Storage, pageNum uint64, entry *VectorEntry, data []byte) error {
-	// Placeholder implementation
-	return nil
-}
+// func writeVectorToStoragePage(storage *Storage, pageNum uint64, entry *VectorEntry, data []byte) error {
+// 	// Placeholder implementation
+// 	return nil
+// }

@@ -23,7 +23,7 @@ func TestMVCCTransactionBegin(t *testing.T) {
 		t.Fatal(err)
 	}
 	if tx == nil {
-		t.Error("Expected transaction")
+		t.Fatal("Expected transaction")
 	}
 	if !tx.active {
 		t.Error("Transaction should be active")
@@ -68,7 +68,7 @@ func TestMVCCReadFromSnapshot(t *testing.T) {
 		t.Errorf("Expected snapshot version with value 1, got %.2f", treasure.Vector[0])
 	}
 
-	tx.Rollback()
+	_ = tx.Rollback()
 }
 
 // Test 3: Write Buffering
@@ -107,7 +107,7 @@ func TestMVCCWriteBuffering(t *testing.T) {
 		t.Error("Expected treasure from own write")
 	}
 
-	tx.Rollback()
+	_ = tx.Rollback()
 }
 
 // Test 4: Conflict Detection
@@ -277,7 +277,7 @@ func TestReadYourOwnWrites(t *testing.T) {
 		t.Errorf("Expected 4, got %.2f", treasure.Vector[0])
 	}
 
-	tx.Rollback()
+	_ = tx.Rollback()
 }
 
 // Test 8: Concurrent Readers
@@ -314,7 +314,7 @@ func TestConcurrentReaders(t *testing.T) {
 				errors <- err
 				return
 			}
-			defer tx.Rollback()
+			defer func() { _ = tx.Rollback() }()
 
 			// Read multiple vectors
 			for j := 0; j < 100; j++ {
@@ -366,7 +366,7 @@ func TestConcurrentWriters(t *testing.T) {
 			id := fmt.Sprintf("vec%d", writerID)
 			err = tx.Store(id, []float32{float32(writerID)})
 			if err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				return
 			}
 
@@ -433,7 +433,7 @@ func TestSnapshotIsolation(t *testing.T) {
 		t.Errorf("Snapshot isolation violated: expected 1, got %.2f", treasure.Vector[0])
 	}
 
-	tx1.Rollback()
+	_ = tx1.Rollback()
 }
 
 // Test 11: Phantom Reads (should NOT occur with SI)
@@ -485,7 +485,7 @@ func TestNoPhantomReads(t *testing.T) {
 		t.Errorf("Expected count to remain 1, got %d", initialCount)
 	}
 
-	tx.Rollback()
+	_ = tx.Rollback()
 }
 
 // Test 12: Lost Update (should NOT occur with SI)
@@ -523,7 +523,7 @@ func TestNoLostUpdate(t *testing.T) {
 			// Read current value
 			treasure, err := tx.Get("counter")
 			if err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				return
 			}
 
@@ -531,7 +531,7 @@ func TestNoLostUpdate(t *testing.T) {
 			newValue := treasure.Vector[0] + 1
 			err = tx.Store("counter", []float32{newValue})
 			if err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				return
 			}
 
@@ -686,7 +686,7 @@ func TestLongRunningTransaction(t *testing.T) {
 		t.Errorf("Expected original version 1, got %.2f", treasure.Vector[0])
 	}
 
-	tx.Rollback()
+	_ = tx.Rollback()
 }
 
 // Test 16: High Contention
@@ -724,7 +724,7 @@ func TestHighContention(t *testing.T) {
 
 			err = tx.Store("hotspot", []float32{float32(id)})
 			if err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				return
 			}
 
@@ -832,11 +832,11 @@ func BenchmarkConflictDetection(b *testing.B) {
 		tx1, _ := nest.Begin()
 		tx2, _ := nest.Begin()
 
-		tx1.Store("hotspot", []float32{1, 1, 1})
-		tx2.Store("hotspot", []float32{2, 2, 2})
+		_ = tx1.Store("hotspot", []float32{1, 1, 1})
+		_ = tx2.Store("hotspot", []float32{2, 2, 2})
 
-		tx1.Commit()
-		tx2.Commit() // Should detect conflict
+		_ = tx1.Commit()
+		_ = tx2.Commit() // Should detect conflict
 	}
 }
 
@@ -862,8 +862,8 @@ func BenchmarkParallelTransactions(b *testing.B) {
 			}
 
 			id := fmt.Sprintf("vec%d_%d", b.N, i)
-			tx.Store(id, []float32{float32(i)})
-			tx.Commit()
+			_ = tx.Store(id, []float32{float32(i)})
+			_ = tx.Commit()
 			i++
 		}
 	})

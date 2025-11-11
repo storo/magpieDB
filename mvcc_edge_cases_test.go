@@ -19,8 +19,8 @@ func TestMVCCNoPhantomReads(t *testing.T) {
 	defer nest.Close()
 
 	// Initial data
-	nest.Store("vec1", []float32{1, 1})
-	nest.Store("vec2", []float32{2, 2})
+	_ = nest.Store("vec1", []float32{1, 1})
+	_ = nest.Store("vec2", []float32{2, 2})
 
 	tx, err := nest.Begin()
 	if err != nil {
@@ -41,8 +41,8 @@ func TestMVCCNoPhantomReads(t *testing.T) {
 
 	// Concurrent insert (in different transaction)
 	tx2, _ := nest.Begin()
-	tx2.Store("vec3", []float32{3, 3})
-	tx2.Commit()
+	_ = tx2.Store("vec3", []float32{3, 3})
+	_ = tx2.Commit()
 
 	// Second scan - should see same count (no phantom)
 	count2 := 0
@@ -60,7 +60,7 @@ func TestMVCCNoPhantomReads(t *testing.T) {
 		t.Errorf("Phantom read detected: first scan=%d, second scan=%d", count1, count2)
 	}
 
-	tx.Commit()
+	_ = tx.Commit()
 
 	// After commit, new transaction should see vec3
 	if !nest.Has("vec3") {
@@ -79,7 +79,7 @@ func TestMVCCNoLostUpdate(t *testing.T) {
 	}
 	defer nest.Close()
 
-	nest.Store("counter", []float32{0, 0})
+	_ = nest.Store("counter", []float32{0, 0})
 
 	tx1, err := nest.Begin()
 	if err != nil {
@@ -103,8 +103,8 @@ func TestMVCCNoLostUpdate(t *testing.T) {
 	}
 
 	// Both increment (read-modify-write)
-	tx1.Store("counter", []float32{v1.Vector[0] + 1, 0})
-	tx2.Store("counter", []float32{v2.Vector[0] + 1, 0})
+	_ = tx1.Store("counter", []float32{v1.Vector[0] + 1, 0})
+	_ = tx2.Store("counter", []float32{v2.Vector[0] + 1, 0})
 
 	// First commits
 	if err := tx1.Commit(); err != nil {
@@ -137,8 +137,8 @@ func TestMVCCWriteSkew(t *testing.T) {
 	defer nest.Close()
 
 	// Initial state: both x and y are 1
-	nest.Store("x", []float32{1, 0})
-	nest.Store("y", []float32{1, 0})
+	_ = nest.Store("x", []float32{1, 0})
+	_ = nest.Store("y", []float32{1, 0})
 
 	tx1, err := nest.Begin()
 	if err != nil {
@@ -152,11 +152,11 @@ func TestMVCCWriteSkew(t *testing.T) {
 
 	// tx1 reads x, writes y
 	x1, _ := tx1.Get("x")
-	tx1.Store("y", []float32{x1.Vector[0] + 1, 0})
+	_ = tx1.Store("y", []float32{x1.Vector[0] + 1, 0})
 
 	// tx2 reads y, writes x
 	y2, _ := tx2.Get("y")
-	tx2.Store("x", []float32{y2.Vector[0] + 1, 0})
+	_ = tx2.Store("x", []float32{y2.Vector[0] + 1, 0})
 
 	// Both commit (write skew possible with SI, but should be handled)
 	err1 := tx1.Commit()
@@ -212,7 +212,7 @@ func TestMVCCDoubleCommit(t *testing.T) {
 	defer nest.Close()
 
 	tx, _ := nest.Begin()
-	tx.Store("vec1", []float32{1, 1})
+	_ = tx.Store("vec1", []float32{1, 1})
 
 	// First commit
 	if err := tx.Commit(); err != nil {
@@ -239,7 +239,7 @@ func TestMVCCCommitAfterRollback(t *testing.T) {
 	defer nest.Close()
 
 	tx, _ := nest.Begin()
-	tx.Store("vec1", []float32{1, 1})
+	_ = tx.Store("vec1", []float32{1, 1})
 
 	// Rollback
 	if err := tx.Rollback(); err != nil {
@@ -271,8 +271,8 @@ func TestMVCCReadOnlyTransaction(t *testing.T) {
 	defer nest.Close()
 
 	// Setup data
-	nest.Store("vec1", []float32{1, 1})
-	nest.Store("vec2", []float32{2, 2})
+	_ = nest.Store("vec1", []float32{1, 1})
+	_ = nest.Store("vec2", []float32{2, 2})
 
 	// Read-only transaction
 	tx, _ := nest.Begin()
@@ -329,17 +329,17 @@ func TestMVCCConcurrentGC(t *testing.T) {
 	defer nest.Close()
 
 	// Create initial version
-	nest.Store("vec1", []float32{0, 0})
+	_ = nest.Store("vec1", []float32{0, 0})
 
 	// Start long transaction
 	longTx, _ := nest.Begin()
-	longTx.Get("vec1")
+	_, _ = longTx.Get("vec1")
 
 	// Create many versions
 	for i := 1; i <= 50; i++ {
 		tx, _ := nest.Begin()
-		tx.Store("vec1", []float32{float32(i), 0})
-		tx.Commit()
+		_ = tx.Store("vec1", []float32{float32(i), 0})
+		_ = tx.Commit()
 	}
 
 	// Trigger GC (implementation-specific)
@@ -356,7 +356,7 @@ func TestMVCCConcurrentGC(t *testing.T) {
 		t.Errorf("GC removed visible version: expected 0, got %f", v.Vector[0])
 	}
 
-	longTx.Commit()
+	_ = longTx.Commit()
 }
 
 // TestMVCCRecoveryCorruption tests recovery from corrupted MVCC data
@@ -408,8 +408,8 @@ func TestMVCCDeadlockDetection(t *testing.T) {
 	defer nest.Close()
 
 	// Setup
-	nest.Store("x", []float32{1, 0})
-	nest.Store("y", []float32{1, 0})
+	_ = nest.Store("x", []float32{1, 0})
+	_ = nest.Store("y", []float32{1, 0})
 
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
@@ -420,11 +420,11 @@ func TestMVCCDeadlockDetection(t *testing.T) {
 		defer wg.Done()
 
 		tx, _ := nest.Begin()
-		tx.Store("x", []float32{2, 0})
+		_ = tx.Store("x", []float32{2, 0})
 
 		time.Sleep(100 * time.Millisecond)
 
-		tx.Store("y", []float32{2, 0})
+		_ = tx.Store("y", []float32{2, 0})
 		results <- tx.Commit()
 	}()
 
@@ -434,11 +434,11 @@ func TestMVCCDeadlockDetection(t *testing.T) {
 		defer wg.Done()
 
 		tx, _ := nest.Begin()
-		tx.Store("y", []float32{3, 0})
+		_ = tx.Store("y", []float32{3, 0})
 
 		time.Sleep(100 * time.Millisecond)
 
-		tx.Store("x", []float32{3, 0})
+		_ = tx.Store("x", []float32{3, 0})
 		results <- tx.Commit()
 	}()
 
@@ -474,7 +474,7 @@ func TestMVCCReadYourWrites(t *testing.T) {
 	tx, _ := nest.Begin()
 
 	// Write
-	tx.Store("vec1", []float32{1, 2})
+	_ = tx.Store("vec1", []float32{1, 2})
 
 	// Read back immediately
 	treasure, err := tx.Get("vec1")
@@ -486,7 +486,7 @@ func TestMVCCReadYourWrites(t *testing.T) {
 		t.Errorf("Read-your-writes violated: expected 1, got %f", treasure.Vector[0])
 	}
 
-	tx.Commit()
+	_ = tx.Commit()
 }
 
 // TestMVCCMonotonicReads tests monotonic read consistency
@@ -500,7 +500,7 @@ func TestMVCCMonotonicReads(t *testing.T) {
 	}
 	defer nest.Close()
 
-	nest.Store("vec1", []float32{1, 0})
+	_ = nest.Store("vec1", []float32{1, 0})
 
 	tx, _ := nest.Begin()
 
@@ -509,8 +509,8 @@ func TestMVCCMonotonicReads(t *testing.T) {
 
 	// Concurrent update
 	tx2, _ := nest.Begin()
-	tx2.Store("vec1", []float32{100, 0})
-	tx2.Commit()
+	_ = tx2.Store("vec1", []float32{100, 0})
+	_ = tx2.Commit()
 
 	// Second read should see same value (monotonic reads)
 	v2, _ := tx.Get("vec1")
@@ -519,7 +519,7 @@ func TestMVCCMonotonicReads(t *testing.T) {
 		t.Errorf("Monotonic reads violated: %f -> %f", v1.Vector[0], v2.Vector[0])
 	}
 
-	tx.Commit()
+	_ = tx.Commit()
 }
 
 // TestMVCCWriteVisibilityToOthers tests write visibility to concurrent transactions
@@ -533,13 +533,13 @@ func TestMVCCWriteVisibilityToOthers(t *testing.T) {
 	}
 	defer nest.Close()
 
-	nest.Store("vec1", []float32{1, 0})
+	_ = nest.Store("vec1", []float32{1, 0})
 
 	tx1, _ := nest.Begin()
 	tx2, _ := nest.Begin()
 
 	// tx1 updates
-	tx1.Store("vec1", []float32{999, 0})
+	_ = tx1.Store("vec1", []float32{999, 0})
 
 	// tx2 should NOT see uncommitted write
 	v, _ := tx2.Get("vec1")
@@ -548,14 +548,14 @@ func TestMVCCWriteVisibilityToOthers(t *testing.T) {
 	}
 
 	// After tx1 commits, tx2 still shouldn't see it (snapshot isolation)
-	tx1.Commit()
+	_ = tx1.Commit()
 
 	v, _ = tx2.Get("vec1")
 	if v.Vector[0] != 1 {
 		t.Errorf("Snapshot isolation violated: expected 1, got %f", v.Vector[0])
 	}
 
-	tx2.Commit()
+	_ = tx2.Commit()
 
 	// New transaction should see committed write
 	tx3, _ := nest.Begin()
@@ -563,7 +563,7 @@ func TestMVCCWriteVisibilityToOthers(t *testing.T) {
 	if v.Vector[0] != 999 {
 		t.Errorf("Committed write not visible: expected 999, got %f", v.Vector[0])
 	}
-	tx3.Commit()
+	_ = tx3.Commit()
 }
 
 // TestMVCCRollbackVisibility tests that rolled back changes are never visible
@@ -577,7 +577,7 @@ func TestMVCCRollbackVisibility(t *testing.T) {
 	}
 	defer nest.Close()
 
-	nest.Store("vec1", []float32{1, 0})
+	_ = nest.Store("vec1", []float32{1, 0})
 
 	var wg sync.WaitGroup
 
@@ -587,9 +587,9 @@ func TestMVCCRollbackVisibility(t *testing.T) {
 		defer wg.Done()
 
 		tx, _ := nest.Begin()
-		tx.Store("vec1", []float32{999, 0})
+		_ = tx.Store("vec1", []float32{999, 0})
 		time.Sleep(50 * time.Millisecond)
-		tx.Rollback()
+		_ = tx.Rollback()
 	}()
 
 	// Concurrent reader
@@ -606,7 +606,7 @@ func TestMVCCRollbackVisibility(t *testing.T) {
 			t.Errorf("Saw uncommitted data: %f", v.Vector[0])
 		}
 
-		tx.Commit()
+		_ = tx.Commit()
 	}()
 
 	wg.Wait()

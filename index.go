@@ -209,40 +209,40 @@ func (idx *HSNWIndex) Serialize() ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	// Write header: node count, maxLevel, m, efConstruct
-	binary.Write(buf, binary.LittleEndian, uint32(len(idx.nodes)))
-	binary.Write(buf, binary.LittleEndian, uint32(idx.maxLevel))
-	binary.Write(buf, binary.LittleEndian, uint32(idx.m))
-	binary.Write(buf, binary.LittleEndian, uint32(idx.efConstruct))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(len(idx.nodes)))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(idx.maxLevel))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(idx.m))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(idx.efConstruct))
 
 	// Write entry point ID (or empty if nil)
 	entryPointID := ""
 	if idx.entryPoint != nil {
 		entryPointID = idx.entryPoint.ID
 	}
-	binary.Write(buf, binary.LittleEndian, uint32(len(entryPointID)))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(len(entryPointID)))
 	buf.WriteString(entryPointID)
 
 	// Write each node
 	for _, node := range idx.nodes {
 		// Write ID
-		binary.Write(buf, binary.LittleEndian, uint32(len(node.ID)))
+		_ = binary.Write(buf, binary.LittleEndian, uint32(len(node.ID)))
 		buf.WriteString(node.ID)
 
 		// Write level
-		binary.Write(buf, binary.LittleEndian, uint32(node.Level))
+		_ = binary.Write(buf, binary.LittleEndian, uint32(node.Level))
 
 		// Write vector dimensions and data
-		binary.Write(buf, binary.LittleEndian, uint32(len(node.Vector)))
+		_ = binary.Write(buf, binary.LittleEndian, uint32(len(node.Vector)))
 		for _, v := range node.Vector {
-			binary.Write(buf, binary.LittleEndian, v)
+			_ = binary.Write(buf, binary.LittleEndian, v)
 		}
 
 		// Write neighbor lists for each level
 		for level := 0; level <= node.Level; level++ {
 			neighbors := node.Neighbors[level]
-			binary.Write(buf, binary.LittleEndian, uint32(len(neighbors)))
+			_ = binary.Write(buf, binary.LittleEndian, uint32(len(neighbors)))
 			for _, nid := range neighbors {
-				binary.Write(buf, binary.LittleEndian, uint32(len(nid)))
+				_ = binary.Write(buf, binary.LittleEndian, uint32(len(nid)))
 				buf.WriteString(nid)
 			}
 		}
@@ -260,10 +260,10 @@ func (idx *HSNWIndex) Deserialize(data []byte) error {
 
 	// Read header
 	var nodeCount, maxLevel, m, efConstruct uint32
-	binary.Read(buf, binary.LittleEndian, &nodeCount)
-	binary.Read(buf, binary.LittleEndian, &maxLevel)
-	binary.Read(buf, binary.LittleEndian, &m)
-	binary.Read(buf, binary.LittleEndian, &efConstruct)
+	_ = binary.Read(buf, binary.LittleEndian, &nodeCount)
+	_ = binary.Read(buf, binary.LittleEndian, &maxLevel)
+	_ = binary.Read(buf, binary.LittleEndian, &m)
+	_ = binary.Read(buf, binary.LittleEndian, &efConstruct)
 
 	idx.maxLevel = int(maxLevel)
 	idx.m = int(m)
@@ -272,30 +272,30 @@ func (idx *HSNWIndex) Deserialize(data []byte) error {
 
 	// Read entry point ID
 	var entryIDLen uint32
-	binary.Read(buf, binary.LittleEndian, &entryIDLen)
+	_ = binary.Read(buf, binary.LittleEndian, &entryIDLen)
 	entryIDBytes := make([]byte, entryIDLen)
-	buf.Read(entryIDBytes)
+	_, _ = buf.Read(entryIDBytes)
 	entryPointID := string(entryIDBytes)
 
 	// Read each node
 	for i := uint32(0); i < nodeCount; i++ {
 		// Read ID
 		var idLen uint32
-		binary.Read(buf, binary.LittleEndian, &idLen)
+		_ = binary.Read(buf, binary.LittleEndian, &idLen)
 		idBytes := make([]byte, idLen)
-		buf.Read(idBytes)
+		_, _ = buf.Read(idBytes)
 		id := string(idBytes)
 
 		// Read level
 		var level uint32
-		binary.Read(buf, binary.LittleEndian, &level)
+		_ = binary.Read(buf, binary.LittleEndian, &level)
 
 		// Read vector
 		var vecLen uint32
-		binary.Read(buf, binary.LittleEndian, &vecLen)
+		_ = binary.Read(buf, binary.LittleEndian, &vecLen)
 		vector := make([]float32, vecLen)
 		for j := uint32(0); j < vecLen; j++ {
-			binary.Read(buf, binary.LittleEndian, &vector[j])
+			_ = binary.Read(buf, binary.LittleEndian, &vector[j])
 		}
 
 		// Create node
@@ -309,13 +309,13 @@ func (idx *HSNWIndex) Deserialize(data []byte) error {
 		// Read neighbor lists
 		for lv := uint32(0); lv <= level; lv++ {
 			var neighborCount uint32
-			binary.Read(buf, binary.LittleEndian, &neighborCount)
+			_ = binary.Read(buf, binary.LittleEndian, &neighborCount)
 			neighbors := make([]string, neighborCount)
 			for j := uint32(0); j < neighborCount; j++ {
 				var nidLen uint32
-				binary.Read(buf, binary.LittleEndian, &nidLen)
+				_ = binary.Read(buf, binary.LittleEndian, &nidLen)
 				nidBytes := make([]byte, nidLen)
-				buf.Read(nidBytes)
+				_, _ = buf.Read(nidBytes)
 				neighbors[j] = string(nidBytes)
 			}
 			node.Neighbors[lv] = neighbors
