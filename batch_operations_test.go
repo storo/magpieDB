@@ -217,6 +217,10 @@ func TestBatchErrorHandling(t *testing.T) {
 
 // TestBatchSizeLimits tests handling of large batches
 func TestBatchSizeLimits(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping 10K vector test in short mode")
+	}
+
 	nest := createTestNest(t)
 	defer cleanupTestNest(nest)
 
