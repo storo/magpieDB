@@ -98,6 +98,8 @@ func (s *Storage) Close() error {
 			errs = append(errs, fmt.Errorf("failed to seek file: %w", err))
 		} else if _, err := s.file.Write(s.mmap); err != nil {
 			errs = append(errs, fmt.Errorf("failed to write file: %w", err))
+		} else if err := s.file.Sync(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to sync file: %w", err))
 		}
 		s.mmap = nil
 	}
