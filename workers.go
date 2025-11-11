@@ -3,7 +3,10 @@ package magpie
 import (
 	"context"
 	"fmt"
+	"log"
+	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,11 +31,13 @@ type WorkerPool struct {
 	wg         sync.WaitGroup
 	mu         sync.Mutex
 	running    bool
+	panicCount *int64 // Track number of panics recovered
 }
 
 // NewWorkerPool creates a new worker pool
 func NewWorkerPool(nest *Nest, numWorkers int) *WorkerPool {
 	ctx, cancel := context.WithCancel(context.Background())
+	var panicCounter int64
 	return &WorkerPool{
 		nest:       nest,
 		tasks:      make(chan Task, 100),
@@ -40,6 +45,7 @@ func NewWorkerPool(nest *Nest, numWorkers int) *WorkerPool {
 		ctx:        ctx,
 		cancel:     cancel,
 		running:    false,
+		panicCount: &panicCounter,
 	}
 }
 
@@ -116,17 +122,43 @@ func (wp *WorkerPool) worker(id int) {
 				return
 			}
 
-			// Execute task
-			if err := task.Execute(wp.nest); err != nil {
-				// Log error but don't crash worker
-				// In production, would use proper logging
-				_ = err
-			}
+			// Execute task with panic recovery
+			wp.safeExecute(id, task)
 
 		case <-wp.ctx.Done():
 			// Context cancelled, exit worker
 			return
 		}
+	}
+}
+
+// safeExecute wraps task execution with panic recovery
+func (wp *WorkerPool) safeExecute(workerID int, task Task) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Increment panic counter
+			atomic.AddInt64(wp.panicCount, 1)
+
+			// Get stack trace
+			stack := debug.Stack()
+
+			// Log panic with full details
+			log.Printf("[WORKER PANIC] Worker %d recovered from panic\n"+
+				"Task: %s\n"+
+				"Panic: %v\n"+
+				"Stack trace:\n%s\n",
+				workerID,
+				task.Name(),
+				r,
+				string(stack))
+		}
+	}()
+
+	// Execute task
+	if err := task.Execute(wp.nest); err != nil {
+		// Log error but don't crash worker
+		// In production, would use proper logging
+		log.Printf("[WORKER ERROR] Worker %d: task %s failed: %v", workerID, task.Name(), err)
 	}
 }
 

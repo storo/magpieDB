@@ -1666,3 +1666,306 @@ func degradeIndexQuality(nest *Nest) {
 }
 
 // verifyBackupIntegrity is now defined in backup.go
+
+// =============================================================================
+// PHASE 1: RED - Panic Recovery Tests (TDD)
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// 9. Worker Panic Recovery Tests (5 tests)
+// -----------------------------------------------------------------------------
+
+// TestWorkerPanicRecovery verifies that workers survive task panics
+func TestWorkerPanicRecovery(t *testing.T) {
+	nest := createTestDatabase(t)
+	defer nest.Close()
+
+	pool := NewWorkerPool(nest, 2)
+	_ = pool.Start()
+	defer func() { _ = pool.Stop() }()
+
+	// Track panic occurrence
+	panicOccurred := false
+	var mu sync.Mutex
+
+	// Task that panics
+	panicTask := &testTask{
+		name: "panic-task",
+		exec: func(n *Nest) error {
+			mu.Lock()
+			panicOccurred = true
+			mu.Unlock()
+			panic("intentional panic for testing")
+		},
+	}
+
+	// Submit panic task
+	_ = pool.SubmitTask(panicTask)
+
+	// Wait for panic to occur
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	if !panicOccurred {
+		mu.Unlock()
+		t.Fatal("Panic task did not execute")
+	}
+	mu.Unlock()
+
+	// Verify worker is still alive by submitting another task
+	executed := false
+	normalTask := &testTask{
+		name: "post-panic-task",
+		exec: func(n *Nest) error {
+			mu.Lock()
+			executed = true
+			mu.Unlock()
+			return nil
+		},
+	}
+
+	_ = pool.SubmitTask(normalTask)
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !executed {
+		t.Error("Worker should survive panic and process subsequent tasks")
+	}
+}
+
+// TestWorkerContinuesAfterPanic verifies worker processes next task after panic
+func TestWorkerContinuesAfterPanic(t *testing.T) {
+	nest := createTestDatabase(t)
+	defer nest.Close()
+
+	pool := NewWorkerPool(nest, 1) // Single worker
+	_ = pool.Start()
+	defer func() { _ = pool.Stop() }()
+
+	var taskOrder []string
+	var mu sync.Mutex
+
+	// Submit 3 tasks: normal, panic, normal
+	tasks := []*testTask{
+		{
+			name: "task-1",
+			exec: func(n *Nest) error {
+				mu.Lock()
+				taskOrder = append(taskOrder, "task-1")
+				mu.Unlock()
+				return nil
+			},
+		},
+		{
+			name: "panic-task",
+			exec: func(n *Nest) error {
+				mu.Lock()
+				taskOrder = append(taskOrder, "panic-task")
+				mu.Unlock()
+				panic("intentional panic")
+			},
+		},
+		{
+			name: "task-3",
+			exec: func(n *Nest) error {
+				mu.Lock()
+				taskOrder = append(taskOrder, "task-3")
+				mu.Unlock()
+				return nil
+			},
+		},
+	}
+
+	for _, task := range tasks {
+		_ = pool.SubmitTask(task)
+	}
+
+	// Wait for all tasks to process
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// All 3 tasks should have executed despite middle one panicking
+	if len(taskOrder) != 3 {
+		t.Errorf("Expected 3 tasks to execute, got %d: %v", len(taskOrder), taskOrder)
+	}
+
+	// Verify order
+	expected := []string{"task-1", "panic-task", "task-3"}
+	for i, name := range expected {
+		if i >= len(taskOrder) || taskOrder[i] != name {
+			t.Errorf("Task order mismatch at index %d: expected %s, got %v", i, name, taskOrder)
+		}
+	}
+}
+
+// TestWorkerLogsWithPanic verifies panic logging with stack trace
+func TestWorkerLogsWithPanic(t *testing.T) {
+	nest := createTestDatabase(t)
+	defer nest.Close()
+
+	pool := NewWorkerPool(nest, 1)
+	_ = pool.Start()
+	defer func() { _ = pool.Stop() }()
+
+	// Task with identifiable panic message
+	uniquePanicMsg := "unique-panic-message-12345"
+	panicTask := &testTask{
+		name: "logged-panic-task",
+		exec: func(n *Nest) error {
+			panic(uniquePanicMsg)
+		},
+	}
+
+	// Submit and wait
+	_ = pool.SubmitTask(panicTask)
+	time.Sleep(100 * time.Millisecond)
+
+	// NOTE: In production, we'd capture logs and verify:
+	// - Worker ID is logged
+	// - Panic message is logged
+	// - Stack trace is included
+	// For now, we verify worker survived (implicit logging occurred)
+
+	executed := false
+	var mu sync.Mutex
+	normalTask := &testTask{
+		name: "verification-task",
+		exec: func(n *Nest) error {
+			mu.Lock()
+			executed = true
+			mu.Unlock()
+			return nil
+		},
+	}
+
+	_ = pool.SubmitTask(normalTask)
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !executed {
+		t.Error("Worker should survive panic with logging")
+	}
+}
+
+// TestMultipleWorkerPanics verifies multiple workers handle panics independently
+func TestMultipleWorkerPanics(t *testing.T) {
+	nest := createTestDatabase(t)
+	defer nest.Close()
+
+	numWorkers := 4
+	pool := NewWorkerPool(nest, numWorkers)
+	_ = pool.Start()
+	defer func() { _ = pool.Stop() }()
+
+	var completedPanics int32
+	var completedNormal int32
+
+	// Submit mix of panic and normal tasks
+	for i := 0; i < 20; i++ {
+		if i%3 == 0 {
+			// Panic task
+			task := &testTask{
+				name: fmt.Sprintf("panic-task-%d", i),
+				exec: func(n *Nest) error {
+					atomic.AddInt32(&completedPanics, 1)
+					panic(fmt.Sprintf("panic from task %d", i))
+				},
+			}
+			_ = pool.SubmitTask(task)
+		} else {
+			// Normal task
+			task := &testTask{
+				name: fmt.Sprintf("normal-task-%d", i),
+				exec: func(n *Nest) error {
+					atomic.AddInt32(&completedNormal, 1)
+					time.Sleep(10 * time.Millisecond)
+					return nil
+				},
+			}
+			_ = pool.SubmitTask(task)
+		}
+	}
+
+	// Wait for completion
+	time.Sleep(1 * time.Second)
+
+	// Verify all tasks attempted (panics counted)
+	panics := atomic.LoadInt32(&completedPanics)
+	normal := atomic.LoadInt32(&completedNormal)
+
+	if panics == 0 {
+		t.Error("Panic tasks should have been executed")
+	}
+
+	if normal == 0 {
+		t.Error("Normal tasks should have been executed")
+	}
+
+	// All workers should still be functional
+	// Submit one more task to each worker
+	var finalTasks int32
+	for i := 0; i < numWorkers; i++ {
+		task := &testTask{
+			name: fmt.Sprintf("final-task-%d", i),
+			exec: func(n *Nest) error {
+				atomic.AddInt32(&finalTasks, 1)
+				return nil
+			},
+		}
+		_ = pool.SubmitTask(task)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	final := atomic.LoadInt32(&finalTasks)
+	if final != int32(numWorkers) {
+		t.Errorf("Expected %d workers to be alive, only %d responded", numWorkers, final)
+	}
+}
+
+// TestWorkerMetricsAfterPanic verifies panic events are tracked
+func TestWorkerMetricsAfterPanic(t *testing.T) {
+	nest := createTestDatabase(t)
+	defer nest.Close()
+
+	pool := NewWorkerPool(nest, 2)
+
+	// Initialize panic counter if not exists
+	if pool.panicCount == nil {
+		pool.panicCount = new(int64)
+	}
+
+	_ = pool.Start()
+	defer func() { _ = pool.Stop() }()
+
+	initialPanics := atomic.LoadInt64(pool.panicCount)
+
+	// Submit tasks that panic
+	numPanics := 5
+	for i := 0; i < numPanics; i++ {
+		task := &testTask{
+			name: fmt.Sprintf("panic-task-%d", i),
+			exec: func(n *Nest) error {
+				panic("test panic")
+			},
+		}
+		_ = pool.SubmitTask(task)
+	}
+
+	// Wait for panics to occur
+	time.Sleep(300 * time.Millisecond)
+
+	// Verify panic counter increased
+	finalPanics := atomic.LoadInt64(pool.panicCount)
+	panicsRecorded := finalPanics - initialPanics
+
+	if panicsRecorded != int64(numPanics) {
+		t.Errorf("Expected %d panics recorded, got %d", numPanics, panicsRecorded)
+	}
+}
