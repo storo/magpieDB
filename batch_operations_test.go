@@ -937,6 +937,10 @@ func BenchmarkPoolContention(b *testing.B) {
 
 // TestBatchFind tests parallel batch search
 func TestBatchFind(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping 1000 vector search test in short mode")
+	}
+
 	nest := createTestNest(t)
 	defer cleanupTestNest(nest)
 

@@ -119,8 +119,8 @@ func (s *Storage) Close() error {
 
 // Sync flushes the in-memory buffer to disk on Windows.
 func (s *Storage) Sync() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	// Write the entire buffer to file
 	if s.mmap != nil && s.file != nil {
