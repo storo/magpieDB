@@ -84,28 +84,6 @@ func (s *Storage) FreePage(pageNum uint64) error {
 	return nil
 }
 
-// Sync flushes memory-mapped changes to disk.
-func (s *Storage) Sync() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.mmap != nil {
-		// Sync the mmap to disk
-		if err := msync(s.mmap); err != nil {
-			return fmt.Errorf("failed to sync mmap: %w", err)
-		}
-	}
-
-	if s.file != nil {
-		if err := s.file.Sync(); err != nil {
-			return fmt.Errorf("failed to sync file: %w", err)
-		}
-	}
-
-	return nil
-}
-
-
 // Size returns the current size of the storage in bytes.
 func (s *Storage) Size() int64 {
 	s.mu.RLock()

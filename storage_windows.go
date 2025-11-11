@@ -94,10 +94,8 @@ func (s *Storage) Close() error {
 
 	// Flush buffer to disk
 	if s.mmap != nil && s.file != nil {
-		if _, err := s.file.Seek(0, io.SeekStart); err != nil {
-			errs = append(errs, fmt.Errorf("failed to seek file: %w", err))
-		} else if _, err := s.file.Write(s.mmap); err != nil {
-			errs = append(errs, fmt.Errorf("failed to write file: %w", err))
+		if _, err := s.file.WriteAt(s.mmap, 0); err != nil {
+			errs = append(errs, fmt.Errorf("failed to write buffer: %w", err))
 		} else if err := s.file.Sync(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to sync file: %w", err))
 		}
@@ -114,6 +112,26 @@ func (s *Storage) Close() error {
 
 	if len(errs) > 0 {
 		return errs[0] // Return first error
+	}
+
+	return nil
+}
+
+// Sync flushes the in-memory buffer to disk on Windows.
+func (s *Storage) Sync() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Write the entire buffer to file
+	if s.mmap != nil && s.file != nil {
+		if _, err := s.file.WriteAt(s.mmap, 0); err != nil {
+			return fmt.Errorf("failed to write buffer to file: %w", err)
+		}
+
+		// Sync to disk
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("failed to sync file: %w", err)
+		}
 	}
 
 	return nil

@@ -128,6 +128,27 @@ func (s *Storage) Close() error {
 	return nil
 }
 
+// Sync flushes memory-mapped changes to disk.
+func (s *Storage) Sync() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.mmap != nil {
+		// Sync the mmap to disk
+		if err := msync(s.mmap); err != nil {
+			return fmt.Errorf("failed to sync mmap: %w", err)
+		}
+	}
+
+	if s.file != nil {
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("failed to sync file: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // msync syncs a memory-mapped region to disk on Unix-like systems.
 func msync(b []byte) error {
 	if len(b) == 0 {
