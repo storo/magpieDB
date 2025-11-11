@@ -146,6 +146,74 @@ func (m *MVCCManager) GetVisibleVersion(id string, tx *MVCCTransaction) *MVCCVer
 	return nil
 }
 
+// deepCopyMetadata creates a deep copy of metadata to prevent shared memory issues
+// This handles nested maps and slices recursively
+func deepCopyMetadata(src map[string]interface{}) map[string]interface{} {
+	if src == nil {
+		return nil
+	}
+
+	dst := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		dst[k] = deepCopyValue(v)
+	}
+	return dst
+}
+
+// deepCopyValue recursively copies a value, handling maps, slices, and primitives
+func deepCopyValue(v interface{}) interface{} {
+	if v == nil {
+		return nil
+	}
+
+	switch val := v.(type) {
+	case map[string]interface{}:
+		// Recursively copy nested maps
+		copied := make(map[string]interface{}, len(val))
+		for k, v := range val {
+			copied[k] = deepCopyValue(v)
+		}
+		return copied
+
+	case []interface{}:
+		// Copy slices
+		copied := make([]interface{}, len(val))
+		for i, item := range val {
+			copied[i] = deepCopyValue(item)
+		}
+		return copied
+
+	case []string:
+		// Copy string slices
+		copied := make([]string, len(val))
+		copy(copied, val)
+		return copied
+
+	case []int:
+		// Copy int slices
+		copied := make([]int, len(val))
+		copy(copied, val)
+		return copied
+
+	case []float64:
+		// Copy float64 slices
+		copied := make([]float64, len(val))
+		copy(copied, val)
+		return copied
+
+	case []float32:
+		// Copy float32 slices
+		copied := make([]float32, len(val))
+		copy(copied, val)
+		return copied
+
+	default:
+		// For primitive types (string, int, bool, float64, etc.), direct assignment is safe
+		// as they are copied by value in Go
+		return v
+	}
+}
+
 // copyVersion creates a deep copy of an MVCCVersion
 // This prevents race conditions when returning versions from the live chain
 func (m *MVCCManager) copyVersion(v *MVCCVersion) *MVCCVersion {
@@ -157,13 +225,10 @@ func (m *MVCCManager) copyVersion(v *MVCCVersion) *MVCCVersion {
 	vectorCopy := make([]float32, len(v.Vector))
 	copy(vectorCopy, v.Vector)
 
-	// Copy metadata
+	// Deep copy metadata (including nested structures)
 	var metadataCopy map[string]interface{}
 	if v.Metadata != nil {
-		metadataCopy = make(map[string]interface{}, len(v.Metadata))
-		for k, val := range v.Metadata {
-			metadataCopy[k] = val
-		}
+		metadataCopy = deepCopyMetadata(v.Metadata)
 	}
 
 	// Return copy without NextVersion pointer (isolate from live chain)
