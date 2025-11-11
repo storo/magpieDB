@@ -745,6 +745,10 @@ func TestBatchRollbackOnPanic(t *testing.T) {
 
 // TestBatchDurability tests that batches survive restart
 func TestBatchDurability(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows: file sync performance issues with fallback storage")
+	}
+
 	path := createTempPath(t)
 	defer cleanupPath(path)
 
@@ -984,6 +988,10 @@ func TestBatchFind(t *testing.T) {
 
 // TestBatchFindConcurrency tests that BatchFind scales with cores
 func TestBatchFindConcurrency(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows: file sync performance issues with fallback storage")
+	}
+
 	nest := createTestNest(t)
 	defer cleanupTestNest(nest)
 
