@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -253,7 +254,7 @@ func randomVector(dim int) []float32 {
 }
 
 func tempBenchFile() string {
-	return fmt.Sprintf("/tmp/magpie_bench_%d.magpie", rand.Int())
+	return filepath.Join(os.TempDir(), fmt.Sprintf("magpie_bench_%d.magpie", rand.Int()))
 }
 
 // Memory benchmark

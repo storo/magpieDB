@@ -11,7 +11,7 @@ import (
 
 func main() {
 	fmt.Println("MagpieDB Batch Operations Example")
-	fmt.Println("==================================\n")
+	fmt.Println("==================================")
 
 	// Open database
 	nest, err := magpie.Open("./batch_example.magpie", magpie.Options{

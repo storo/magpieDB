@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func benchmarkInsertN(b *testing.B, n, dims int) {
 
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		path := fmt.Sprintf("/tmp/bench_insert_%d_%d.magpie", n, i)
+		path := filepath.Join(os.TempDir(), fmt.Sprintf("bench_insert_%d_%d.magpie", n, i))
 		defer os.Remove(path)
 
 		nest, err := Open(path, Options{
@@ -108,7 +109,7 @@ func BenchmarkSearch1M_K100(b *testing.B) {
 }
 
 func benchmarkSearchNK(b *testing.B, n, k, dims int) {
-	path := fmt.Sprintf("/tmp/bench_search_%d.magpie", n)
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("bench_search_%d.magpie", n))
 	defer os.Remove(path)
 
 	nest := setupBenchmarkDB(b, path, n, dims)
@@ -147,7 +148,7 @@ func BenchmarkParallelSearch1M_K10(b *testing.B) {
 		b.Skip("Skipping parallel search in short mode")
 	}
 
-	path := "/tmp/bench_parallel_1m.magpie"
+	path := filepath.Join(os.TempDir(), "bench_parallel_1m.magpie")
 	defer os.Remove(path)
 
 	nest := setupBenchmarkDB(b, path, 1000000, 128)
@@ -167,7 +168,7 @@ func BenchmarkParallelSearch1M_K10(b *testing.B) {
 }
 
 func BenchmarkParallelSearch100K_K10(b *testing.B) {
-	path := "/tmp/bench_parallel_100k.magpie"
+	path := filepath.Join(os.TempDir(), "bench_parallel_100k.magpie")
 	defer os.Remove(path)
 
 	nest := setupBenchmarkDB(b, path, 100000, 128)
@@ -193,7 +194,7 @@ func BenchmarkMemoryUsage1M(b *testing.B) {
 		b.Skip("Skipping memory test in short mode")
 	}
 
-	path := "/tmp/bench_memory_1m.magpie"
+	path := filepath.Join(os.TempDir(), "bench_memory_1m.magpie")
 	defer os.Remove(path)
 
 	var m1, m2 runtime.MemStats
@@ -235,7 +236,7 @@ func BenchmarkMemoryUsage1M(b *testing.B) {
 }
 
 func BenchmarkMemoryUsage100K(b *testing.B) {
-	path := "/tmp/bench_memory_100k.magpie"
+	path := filepath.Join(os.TempDir(), "bench_memory_100k.magpie")
 	defer os.Remove(path)
 
 	var m1, m2 runtime.MemStats
@@ -274,7 +275,7 @@ func BenchmarkMemoryUsage100K(b *testing.B) {
 // ===== CACHE BENCHMARKS =====
 
 func BenchmarkCacheHitRate(b *testing.B) {
-	path := "/tmp/bench_cache.magpie"
+	path := filepath.Join(os.TempDir(), "bench_cache.magpie")
 	defer os.Remove(path)
 
 	nest, err := Open(path, Options{
@@ -315,7 +316,7 @@ func BenchmarkCacheHitRate(b *testing.B) {
 }
 
 func BenchmarkCacheVaryingQueries(b *testing.B) {
-	path := "/tmp/bench_cache_varying.magpie"
+	path := filepath.Join(os.TempDir(), "bench_cache_varying.magpie")
 	defer os.Remove(path)
 
 	nest, err := Open(path, Options{
@@ -365,7 +366,7 @@ func BenchmarkMixedWorkload1M(b *testing.B) {
 		b.Skip("Skipping mixed workload in short mode")
 	}
 
-	path := "/tmp/bench_mixed_1m.magpie"
+	path := filepath.Join(os.TempDir(), "bench_mixed_1m.magpie")
 	defer os.Remove(path)
 
 	nest := setupBenchmarkDB(b, path, 1000000, 128)
@@ -401,7 +402,7 @@ func BenchmarkSearchDimensions(b *testing.B) {
 
 	for _, dim := range dimensions {
 		b.Run(fmt.Sprintf("dim=%d", dim), func(b *testing.B) {
-			path := fmt.Sprintf("/tmp/bench_dim_%d.magpie", dim)
+			path := filepath.Join(os.TempDir(), fmt.Sprintf("bench_dim_%d.magpie", dim))
 			defer os.Remove(path)
 
 			nest := setupBenchmarkDB(b, path, 10000, dim)
@@ -425,7 +426,7 @@ func BenchmarkInsertDimensions(b *testing.B) {
 
 	for _, dim := range dimensions {
 		b.Run(fmt.Sprintf("dim=%d", dim), func(b *testing.B) {
-			path := fmt.Sprintf("/tmp/bench_insert_dim_%d.magpie", dim)
+			path := filepath.Join(os.TempDir(), fmt.Sprintf("bench_insert_dim_%d.magpie", dim))
 			defer os.Remove(path)
 
 			nest, err := Open(path, Options{Dimensions: dim})
@@ -452,7 +453,7 @@ func BenchmarkFileSize1M(b *testing.B) {
 		b.Skip("Skipping file size test in short mode")
 	}
 
-	path := "/tmp/bench_filesize_1m.magpie"
+	path := filepath.Join(os.TempDir(), "bench_filesize_1m.magpie")
 	defer os.Remove(path)
 
 	nest, err := Open(path, Options{Dimensions: 128})

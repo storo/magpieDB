@@ -2,6 +2,8 @@ package magpie
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -499,7 +501,7 @@ func BenchmarkMetricsOverhead(b *testing.B) {
 
 func setupTestDB(t *testing.T) *Nest {
 	// Use a unique path for each test
-	path := fmt.Sprintf("/tmp/test_metrics_%s.magpie", t.Name())
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("test_metrics_%s.magpie", t.Name()))
 
 	// Clean up any existing file
 	cleanupPath(path)
