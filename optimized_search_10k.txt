@@ -1,0 +1,7 @@
+goos: linux
+goarch: amd64
+pkg: github.com/voidlab/magpiedb
+cpu: Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz
+BenchmarkSearch10K_K10-8   	    2005	   1948918 ns/op	       513.1 searches/sec	      1949 us/search	  227368 B/op	    1492 allocs/op
+PASS
+ok  	github.com/voidlab/magpiedb	146.994s

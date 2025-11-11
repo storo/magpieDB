@@ -1,0 +1,420 @@
+package magpie
+
+import (
+	"sync"
+	"testing"
+	"time"
+)
+
+// Test 1: TxID Generation
+func TestTxIDGeneration(t *testing.T) {
+	mvcc := NewMVCCManager()
+	tx1 := mvcc.BeginTx()
+	tx2 := mvcc.BeginTx()
+
+	if tx2.ID <= tx1.ID {
+		t.Errorf("TxIDs not monotonic: tx1=%d, tx2=%d", tx1.ID, tx2.ID)
+	}
+
+	if tx1.State != TxActive {
+		t.Errorf("New transaction should be active, got %v", tx1.State)
+	}
+}
+
+// Test 2: Version Creation
+func TestVersionCreation(t *testing.T) {
+	mvcc := NewMVCCManager()
+	tx := mvcc.BeginTx()
+
+	vector := []float32{1.0, 2.0, 3.0}
+	metadata := map[string]interface{}{"key": "value"}
+	version := mvcc.CreateVersion(tx.ID, "vec1", vector, metadata)
+
+	if version.CreatedByTx != tx.ID {
+		t.Errorf("Wrong creator: expected %d, got %d", tx.ID, version.CreatedByTx)
+	}
+
+	if version.DeletedByTx != 0 {
+		t.Errorf("New version should not be deleted, got deletedByTx=%d", version.DeletedByTx)
+	}
+
+	if version.Version != 1 {
+		t.Errorf("First version should be 1, got %d", version.Version)
+	}
+
+	if version.ID != "vec1" {
+		t.Errorf("Wrong ID: expected vec1, got %s", version.ID)
+	}
+}
+
+// Test 3: Visibility Rules (Snapshot Isolation)
+func TestVisibilityRules(t *testing.T) {
+	mvcc := NewMVCCManager()
+	tx1 := mvcc.BeginTx()
+	version := mvcc.CreateVersion(tx1.ID, "vec1", []float32{1, 2, 3}, nil)
+	mvcc.AddVersion("vec1", version)
+
+	// Transaction with snapshot before creation shouldn't see it
+	tx0 := &MVCCTransaction{
+		ID:           0,
+		SnapshotTxID: 0,
+		State:        TxActive,
+	}
+	if mvcc.IsVisible(version, tx0) {
+		t.Error("Transaction shouldn't see version created by future tx")
+	}
+
+	// Mark as committed by committing the version
+	mvcc.CommitVersion(version, tx1.ID)
+
+	// Transaction after creation should see it
+	tx2 := mvcc.BeginTx()
+	if !mvcc.IsVisible(version, tx2) {
+		t.Error("Transaction should see committed version from past")
+	}
+}
+
+// Test 4: Version Chain Management
+func TestVersionChain(t *testing.T) {
+	mvcc := NewMVCCManager()
+
+	tx1 := mvcc.BeginTx()
+	v1 := mvcc.CreateVersion(tx1.ID, "vec1", []float32{1, 2}, nil)
+	mvcc.AddVersion("vec1", v1)
+
+	tx2 := mvcc.BeginTx()
+	v2 := mvcc.CreateVersion(tx2.ID, "vec1", []float32{3, 4}, nil)
+	mvcc.AddVersion("vec1", v2)
+
+	versions := mvcc.GetVersionChain("vec1")
+	if len(versions) != 2 {
+		t.Errorf("Expected 2 versions, got %d", len(versions))
+	}
+
+	// Newest should be first
+	if versions[0].Version != v2.Version {
+		t.Error("Newest version should be first in chain")
+	}
+
+	if versions[1].Version != v1.Version {
+		t.Error("Older version should be second in chain")
+	}
+}
+
+// Test 5: Get Visible Version
+func TestGetVisibleVersion(t *testing.T) {
+	mvcc := NewMVCCManager()
+
+	tx1 := mvcc.BeginTx()
+	v1 := mvcc.CreateVersion(tx1.ID, "vec1", []float32{1, 2}, nil)
+	mvcc.AddVersion("vec1", v1)
+	mvcc.CommitVersion(v1, tx1.ID)
+
+	tx2 := mvcc.BeginTx()
+	visible := mvcc.GetVisibleVersion("vec1", tx2)
+
+	if visible == nil {
+		t.Fatal("Should see committed version")
+	}
+
+	if visible.CreatedByTx != tx1.ID {
+		t.Errorf("Wrong version visible: expected creator %d, got %d", tx1.ID, visible.CreatedByTx)
+	}
+}
+
+// Test 6: Version Deletion
+func TestVersionDeletion(t *testing.T) {
+	mvcc := NewMVCCManager()
+
+	tx1 := mvcc.BeginTx()
+	v1 := mvcc.CreateVersion(tx1.ID, "vec1", []float32{1, 2}, nil)
+	mvcc.AddVersion("vec1", v1)
+	mvcc.CommitVersion(v1, tx1.ID)
+
+	tx2 := mvcc.BeginTx()
+	err := mvcc.DeleteVersion("vec1", tx2.ID)
+	if err != nil {
+		t.Fatalf("Failed to delete version: %v", err)
+	}
+
+	// Verify deletion marker
+	chain := mvcc.GetVersionChain("vec1")
+	if len(chain) == 0 {
+		t.Fatal("Version chain should not be empty")
+	}
+
+	if chain[0].DeletedByTx != tx2.ID {
+		t.Errorf("Expected deletedByTx=%d, got %d", tx2.ID, chain[0].DeletedByTx)
+	}
+}
+
+// Test 7: Multiple Versions Per ID
+func TestMultipleVersionsPerID(t *testing.T) {
+	mvcc := NewMVCCManager()
+
+	// Create 5 versions of the same vector ID
+	for i := 0; i < 5; i++ {
+		tx := mvcc.BeginTx()
+		vector := []float32{float32(i), float32(i + 1)}
+		v := mvcc.CreateVersion(tx.ID, "vec1", vector, nil)
+		mvcc.AddVersion("vec1", v)
+		mvcc.CommitVersion(v, tx.ID)
+	}
+
+	chain := mvcc.GetVersionChain("vec1")
+	if len(chain) != 5 {
+		t.Errorf("Expected 5 versions, got %d", len(chain))
+	}
+
+	// Verify ordering (newest first)
+	for i := 0; i < len(chain)-1; i++ {
+		if chain[i].Version <= chain[i+1].Version {
+			t.Error("Version chain not properly ordered (newest first)")
+		}
+	}
+}
+
+// Test 8: Concurrent Version Access
+func TestConcurrentVersionAccess(t *testing.T) {
+	mvcc := NewMVCCManager()
+
+	var wg sync.WaitGroup
+	numGoroutines := 100
+
+	// Concurrent transaction creation
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			tx := mvcc.BeginTx()
+			if tx == nil {
+				t.Error("BeginTx returned nil")
+				return
+			}
+
+			// Create a version
+			v := mvcc.CreateVersion(tx.ID, "vec1", []float32{float32(idx)}, nil)
+			mvcc.AddVersion("vec1", v)
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify all versions were added
+	chain := mvcc.GetVersionChain("vec1")
+	if len(chain) != numGoroutines {
+		t.Errorf("Expected %d versions, got %d", numGoroutines, len(chain))
+	}
+}
+
+// Test 9: Snapshot Isolation Properties
+func TestSnapshotIsolationProperties(t *testing.T) {
+	mvcc := NewMVCCManager()
+
+	// Create initial version
+	tx1 := mvcc.BeginTx()
+	v1 := mvcc.CreateVersion(tx1.ID, "vec1", []float32{1, 2}, nil)
+	mvcc.AddVersion("vec1", v1)
+	mvcc.CommitVersion(v1, tx1.ID)
+
+	// Start transaction 2 (takes snapshot)
+	tx2 := mvcc.BeginTx()
+	snapshotTx2 := tx2.SnapshotTxID
+
+	// Transaction 3 creates a new version AFTER tx2's snapshot
+	tx3 := mvcc.BeginTx()
+	v2 := mvcc.CreateVersion(tx3.ID, "vec1", []float32{3, 4}, nil)
+	mvcc.AddVersion("vec1", v2)
+	mvcc.CommitVersion(v2, tx3.ID)
+
+	// tx2 should NOT see v2 (created after its snapshot)
+	visible := mvcc.GetVisibleVersion("vec1", tx2)
+	if visible == nil {
+		t.Fatal("Should see some version")
+	}
+
+	if visible.CreatedByTx != tx1.ID {
+		t.Errorf("tx2 should see v1 (snapshot isolation), got version from tx %d", visible.CreatedByTx)
+	}
+
+	// Verify snapshot point
+	if snapshotTx2 >= tx3.ID {
+		t.Error("Snapshot should be before tx3")
+	}
+}
+
+// Test 10: Version GC Candidates
+func TestVersionGCCandidates(t *testing.T) {
+	mvcc := NewMVCCManager()
+
+	// Create several versions
+	tx1 := mvcc.BeginTx()
+	v1 := mvcc.CreateVersion(tx1.ID, "vec1", []float32{1, 2}, nil)
+	mvcc.AddVersion("vec1", v1)
+	mvcc.CommitVersion(v1, tx1.ID)
+
+	tx2 := mvcc.BeginTx()
+	v2 := mvcc.CreateVersion(tx2.ID, "vec1", []float32{3, 4}, nil)
+	mvcc.AddVersion("vec1", v2)
+	mvcc.CommitVersion(v2, tx2.ID)
+
+	tx3 := mvcc.BeginTx()
+	v3 := mvcc.CreateVersion(tx3.ID, "vec1", []float32{5, 6}, nil)
+	mvcc.AddVersion("vec1", v3)
+	mvcc.CommitVersion(v3, tx3.ID)
+
+	// All transactions are committed, old versions are GC candidates
+	candidates := mvcc.GetGCCandidates()
+
+	// Should have at least some candidates (old versions no longer visible)
+	if len(candidates) == 0 {
+		t.Log("No GC candidates found (may be expected if no old transactions)")
+	}
+}
+
+// Test 11: Get Visible Version with Deletion
+func TestGetVisibleVersionDeleted(t *testing.T) {
+	mvcc := NewMVCCManager()
+
+	tx1 := mvcc.BeginTx()
+	v1 := mvcc.CreateVersion(tx1.ID, "vec1", []float32{1, 2}, nil)
+	mvcc.AddVersion("vec1", v1)
+	mvcc.CommitVersion(v1, tx1.ID)
+
+	// Take snapshot
+	tx2 := mvcc.BeginTx()
+
+	// Delete the version
+	tx3 := mvcc.BeginTx()
+	mvcc.DeleteVersion("vec1", tx3.ID)
+
+	// tx2 should still see it (snapshot before deletion)
+	visible := mvcc.GetVisibleVersion("vec1", tx2)
+	if visible == nil {
+		t.Error("tx2 should see version (snapshot before deletion)")
+	}
+
+	// tx4 (after deletion) should NOT see it
+	tx4 := mvcc.BeginTx()
+	visible = mvcc.GetVisibleVersion("vec1", tx4)
+	if visible != nil {
+		t.Error("tx4 should NOT see deleted version")
+	}
+}
+
+// Test 12: Version Chain Ordering
+func TestVersionChainOrdering(t *testing.T) {
+	mvcc := NewMVCCManager()
+
+	// Create versions in order
+	txIDs := []TxID{}
+	for i := 0; i < 10; i++ {
+		tx := mvcc.BeginTx()
+		txIDs = append(txIDs, tx.ID)
+		v := mvcc.CreateVersion(tx.ID, "vec1", []float32{float32(i)}, nil)
+		mvcc.AddVersion("vec1", v)
+		mvcc.CommitVersion(v, tx.ID)
+	}
+
+	chain := mvcc.GetVersionChain("vec1")
+
+	// Verify chain is ordered newest to oldest
+	for i := 0; i < len(chain)-1; i++ {
+		if chain[i].CreatedByTx <= chain[i+1].CreatedByTx {
+			t.Errorf("Chain not ordered: pos %d has tx %d, pos %d has tx %d",
+				i, chain[i].CreatedByTx, i+1, chain[i+1].CreatedByTx)
+		}
+	}
+}
+
+// Test 13: Transaction Abort
+func TestTransactionAbort(t *testing.T) {
+	mvcc := NewMVCCManager()
+
+	tx := mvcc.BeginTx()
+	v := mvcc.CreateVersion(tx.ID, "vec1", []float32{1, 2}, nil)
+	mvcc.AddVersion("vec1", v)
+
+	// Abort the transaction
+	err := mvcc.AbortTx(tx.ID)
+	if err != nil {
+		t.Fatalf("Failed to abort transaction: %v", err)
+	}
+
+	// Verify transaction state
+	txData, exists := mvcc.GetTx(tx.ID)
+	if !exists {
+		t.Log("Transaction removed after abort (acceptable)")
+	} else if txData.State != TxAborted {
+		t.Errorf("Transaction should be aborted, got state %v", txData.State)
+	}
+}
+
+// Test 14: Nonexistent Vector
+func TestGetVisibleVersionNonexistent(t *testing.T) {
+	mvcc := NewMVCCManager()
+	tx := mvcc.BeginTx()
+
+	visible := mvcc.GetVisibleVersion("nonexistent", tx)
+	if visible != nil {
+		t.Error("Should return nil for nonexistent vector")
+	}
+}
+
+// Test 15: Empty Version Chain
+func TestEmptyVersionChain(t *testing.T) {
+	mvcc := NewMVCCManager()
+
+	chain := mvcc.GetVersionChain("nonexistent")
+	if len(chain) != 0 {
+		t.Errorf("Expected empty chain, got %d versions", len(chain))
+	}
+}
+
+// Benchmark: Version Lookup
+func BenchmarkVersionLookup(b *testing.B) {
+	mvcc := NewMVCCManager()
+
+	// Create 1000 versions
+	for i := 0; i < 1000; i++ {
+		tx := mvcc.BeginTx()
+		v := mvcc.CreateVersion(tx.ID, "vec1", []float32{float32(i)}, nil)
+		mvcc.AddVersion("vec1", v)
+		mvcc.CommitVersion(v, tx.ID)
+	}
+
+	tx := mvcc.BeginTx()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mvcc.GetVisibleVersion("vec1", tx)
+	}
+}
+
+// Benchmark: Visibility Check
+func BenchmarkVisibilityCheck(b *testing.B) {
+	mvcc := NewMVCCManager()
+
+	tx1 := mvcc.BeginTx()
+	v := mvcc.CreateVersion(tx1.ID, "vec1", []float32{1, 2}, nil)
+	mvcc.CommitVersion(v, tx1.ID)
+
+	tx2 := mvcc.BeginTx()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mvcc.IsVisible(v, tx2)
+	}
+}
+
+// Helper function for tests
+func createTestVersion(txID TxID, version VersionNum) *VectorVersion {
+	return &VectorVersion{
+		ID:          "test",
+		Version:     version,
+		Vector:      []float32{1.0, 2.0},
+		Metadata:    nil,
+		CreatedByTx: txID,
+		DeletedByTx: 0,
+	}
+}

@@ -1,0 +1,930 @@
+package magpie
+
+import (
+	"fmt"
+	"math/rand"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+)
+
+// TestFullPersistence stores 100 vectors, closes, reopens, and verifies all present
+func TestFullPersistence(t *testing.T) {
+	tmpfile := tempFilename()
+	defer os.Remove(tmpfile)
+	defer os.Remove(tmpfile + ".wal")
+
+	const vectorCount = 100
+	const dimensions = 128
+
+	// Phase 1: Store vectors
+	t.Log("Phase 1: Storing 100 vectors...")
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	storedVectors := make(map[string][]float32)
+	for i := 0; i < vectorCount; i++ {
+		id := fmt.Sprintf("vec%03d", i)
+		vector := randomVector(dimensions)
+		storedVectors[id] = vector
+
+		metadata := map[string]interface{}{
+			"index":     i,
+			"timestamp": time.Now().Unix(),
+		}
+
+		err = nest.Store(id, vector, metadata)
+		if err != nil {
+			t.Fatalf("Failed to store vector %s: %v", id, err)
+		}
+	}
+
+	// Verify count before closing
+	count := nest.Count()
+	if count != vectorCount {
+		t.Errorf("Expected count %d, got %d", vectorCount, count)
+	}
+
+	t.Logf("Stored %d vectors successfully", count)
+
+	err = nest.Close()
+	if err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
+
+	// Phase 2: Reopen and verify
+	t.Log("Phase 2: Reopening database...")
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
+	}
+	defer nest.Close()
+
+	// Verify count after reopening
+	count = nest.Count()
+	if count != vectorCount {
+		t.Errorf("After reopen: Expected count %d, got %d", vectorCount, count)
+	}
+
+	// Verify all vectors are present and searchable
+	missingCount := 0
+	for id, expectedVector := range storedVectors {
+		if !nest.Has(id) {
+			t.Errorf("Vector %s not found after reopen", id)
+			missingCount++
+			continue
+		}
+
+		// Verify retrieval
+		treasure, err := nest.Get(id)
+		if err != nil {
+			t.Errorf("Failed to get vector %s: %v", id, err)
+			continue
+		}
+
+		// Verify vector data matches
+		if len(treasure.Vector) != len(expectedVector) {
+			t.Errorf("Vector %s dimension mismatch: expected %d, got %d",
+				id, len(expectedVector), len(treasure.Vector))
+		}
+	}
+
+	if missingCount > 0 {
+		t.Errorf("%d vectors missing after reopen", missingCount)
+	} else {
+		t.Logf("All %d vectors successfully recovered", vectorCount)
+	}
+}
+
+// TestWALRecovery simulates a crash and replays WAL to verify consistency
+func TestWALRecovery(t *testing.T) {
+	tmpfile := tempFilename()
+	defer os.Remove(tmpfile)
+	defer os.Remove(tmpfile + ".wal")
+
+	const dimensions = 64
+
+	// Phase 1: Store initial vectors and close cleanly
+	t.Log("Phase 1: Creating initial database state...")
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	for i := 0; i < 50; i++ {
+		id := fmt.Sprintf("initial%03d", i)
+		vector := randomVector(dimensions)
+		nest.Store(id, vector)
+	}
+
+	nest.Close()
+
+	// Phase 2: Reopen, add more vectors, simulate crash (don't close)
+	t.Log("Phase 2: Adding vectors and simulating crash...")
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
+	}
+
+	// Add more vectors (these will be in WAL but not necessarily in pages)
+	crashVectors := make(map[string][]float32)
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("crash%03d", i)
+		vector := randomVector(dimensions)
+		crashVectors[id] = vector
+		nest.Store(id, vector)
+	}
+
+	// Flush WAL to ensure entries are written
+	if nest.wal != nil {
+		nest.wal.Flush()
+	}
+
+	// Simulate crash: don't call Close(), just release the nest
+	// This leaves the WAL file with uncommitted entries
+	nest = nil
+
+	// Phase 3: Recover from crash
+	t.Log("Phase 3: Recovering from crash...")
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to recover database: %v", err)
+	}
+	defer nest.Close()
+
+	// Verify total count (initial + crash vectors)
+	expectedCount := int64(50 + 25)
+	count := nest.Count()
+	if count != expectedCount {
+		t.Errorf("After recovery: Expected count %d, got %d", expectedCount, count)
+	}
+
+	// Verify crash vectors are recovered
+	for id := range crashVectors {
+		if !nest.Has(id) {
+			t.Errorf("Crash vector %s not recovered", id)
+		}
+	}
+
+	t.Logf("Successfully recovered %d vectors after crash", count)
+}
+
+// TestLargeDataset tests that 10K vectors survive restart
+func TestLargeDataset(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping large dataset test in short mode")
+	}
+
+	tmpfile := tempFilename()
+	defer os.Remove(tmpfile)
+	defer os.Remove(tmpfile + ".wal")
+
+	const vectorCount = 10000
+	const dimensions = 128
+
+	t.Log("Creating database with 10K vectors...")
+
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	// Store 10K vectors
+	start := time.Now()
+	for i := 0; i < vectorCount; i++ {
+		id := fmt.Sprintf("large%05d", i)
+		vector := randomVector(dimensions)
+		err = nest.Store(id, vector)
+		if err != nil {
+			t.Fatalf("Failed to store vector %d: %v", i, err)
+		}
+
+		if (i+1)%1000 == 0 {
+			t.Logf("Stored %d/%d vectors...", i+1, vectorCount)
+		}
+	}
+	elapsed := time.Since(start)
+	t.Logf("Stored %d vectors in %v (%.0f vec/sec)", vectorCount, elapsed, float64(vectorCount)/elapsed.Seconds())
+
+	nest.Close()
+
+	// Reopen and verify
+	t.Log("Reopening database...")
+	start = time.Now()
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
+	}
+	defer nest.Close()
+
+	elapsed = time.Since(start)
+	t.Logf("Reopened database in %v", elapsed)
+
+	count := nest.Count()
+	if count != vectorCount {
+		t.Errorf("Expected count %d, got %d", vectorCount, count)
+	}
+
+	// Spot check some vectors
+	checkCount := 100
+	for i := 0; i < checkCount; i++ {
+		idx := rand.Intn(vectorCount)
+		id := fmt.Sprintf("large%05d", idx)
+		if !nest.Has(id) {
+			t.Errorf("Vector %s not found", id)
+		}
+	}
+
+	t.Logf("Large dataset test passed: %d vectors", count)
+}
+
+// TestIncrementalInsert inserts 1K, closes, reopens, inserts 1K more
+func TestIncrementalInsert(t *testing.T) {
+	tmpfile := tempFilename()
+	defer os.Remove(tmpfile)
+	defer os.Remove(tmpfile + ".wal")
+
+	const batchSize = 1000
+	const dimensions = 64
+
+	// Batch 1
+	t.Log("Batch 1: Inserting 1000 vectors...")
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	for i := 0; i < batchSize; i++ {
+		id := fmt.Sprintf("batch1_%04d", i)
+		vector := randomVector(dimensions)
+		nest.Store(id, vector)
+	}
+
+	count1 := nest.Count()
+	if count1 != batchSize {
+		t.Errorf("Batch 1: Expected count %d, got %d", batchSize, count1)
+	}
+
+	nest.Close()
+
+	// Batch 2
+	t.Log("Batch 2: Inserting 1000 more vectors...")
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
+	}
+	defer nest.Close()
+
+	// Verify batch 1 is still there
+	count := nest.Count()
+	if count != batchSize {
+		t.Errorf("After reopen: Expected count %d, got %d", batchSize, count)
+	}
+
+	// Add batch 2
+	for i := 0; i < batchSize; i++ {
+		id := fmt.Sprintf("batch2_%04d", i)
+		vector := randomVector(dimensions)
+		nest.Store(id, vector)
+	}
+
+	count2 := nest.Count()
+	expectedTotal := int64(batchSize * 2)
+	if count2 != expectedTotal {
+		t.Errorf("Batch 2: Expected count %d, got %d", expectedTotal, count2)
+	}
+
+	// Verify both batches are present
+	for i := 0; i < batchSize; i++ {
+		id1 := fmt.Sprintf("batch1_%04d", i)
+		id2 := fmt.Sprintf("batch2_%04d", i)
+
+		if !nest.Has(id1) {
+			t.Errorf("Batch 1 vector %s missing", id1)
+		}
+		if !nest.Has(id2) {
+			t.Errorf("Batch 2 vector %s missing", id2)
+		}
+	}
+
+	t.Logf("Incremental insert test passed: %d total vectors", count2)
+}
+
+// TestMetadataPersistence verifies metadata survives across restarts
+func TestMetadataPersistence(t *testing.T) {
+	tmpfile := tempFilename()
+	defer os.Remove(tmpfile)
+	defer os.Remove(tmpfile + ".wal")
+
+	const dimensions = 32
+
+	// Store vectors with rich metadata
+	t.Log("Storing vectors with metadata...")
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	testMetadata := []map[string]interface{}{
+		{"type": "document", "category": "science", "rating": 4.5, "tags": []string{"physics", "quantum"}},
+		{"type": "image", "category": "art", "rating": 3.8, "tags": []string{"modern", "abstract"}},
+		{"type": "video", "category": "education", "rating": 5.0, "tags": []string{"tutorial", "beginner"}},
+	}
+
+	for i, meta := range testMetadata {
+		id := fmt.Sprintf("meta%03d", i)
+		vector := randomVector(dimensions)
+		nest.Store(id, vector, meta)
+	}
+
+	nest.Close()
+
+	// Reopen and verify metadata
+	t.Log("Reopening and verifying metadata...")
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
+	}
+	defer nest.Close()
+
+	for i := range testMetadata {
+		id := fmt.Sprintf("meta%03d", i)
+		treasure, err := nest.Get(id)
+		if err != nil {
+			t.Errorf("Failed to get vector %s: %v", id, err)
+			continue
+		}
+
+		// For now, metadata persistence is not fully implemented
+		// This test will pass when loadMetadata() is completed
+		if treasure.Metadata != nil {
+			t.Logf("Metadata for %s: %v", id, treasure.Metadata)
+		} else {
+			t.Logf("Metadata for %s: not yet persisted (expected in Phase 3)", id)
+		}
+	}
+
+	t.Log("Metadata persistence test completed")
+}
+
+// TestSearchConsistency verifies search results are same after reopen
+func TestSearchConsistency(t *testing.T) {
+	tmpfile := tempFilename()
+	defer os.Remove(tmpfile)
+	defer os.Remove(tmpfile + ".wal")
+
+	const vectorCount = 100
+	const dimensions = 64
+
+	// Store vectors
+	t.Log("Creating search dataset...")
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	for i := 0; i < vectorCount; i++ {
+		id := fmt.Sprintf("search%03d", i)
+		vector := randomVector(dimensions)
+		nest.Store(id, vector)
+	}
+
+	// Perform search and record results
+	queryVector := randomVector(dimensions)
+	results1 := nest.Find(queryVector, 10)
+	if len(results1) == 0 {
+		t.Fatal("No search results before reopen")
+	}
+
+	t.Logf("Search before close: found %d results", len(results1))
+
+	nest.Close()
+
+	// Reopen and search again
+	t.Log("Reopening and searching again...")
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
+	}
+	defer nest.Close()
+
+	results2 := nest.Find(queryVector, 10)
+	if len(results2) == 0 {
+		t.Fatal("No search results after reopen")
+	}
+
+	t.Logf("Search after reopen: found %d results", len(results2))
+
+	// Compare results - IDs and order should match
+	if len(results1) != len(results2) {
+		t.Errorf("Result count mismatch: before=%d, after=%d", len(results1), len(results2))
+	}
+
+	minLen := len(results1)
+	if len(results2) < minLen {
+		minLen = len(results2)
+	}
+
+	mismatchCount := 0
+	for i := 0; i < minLen; i++ {
+		if results1[i].ID != results2[i].ID {
+			t.Errorf("Result %d mismatch: before=%s, after=%s", i, results1[i].ID, results2[i].ID)
+			mismatchCount++
+		}
+	}
+
+	if mismatchCount == 0 {
+		t.Log("Search results consistent across restart")
+	} else {
+		t.Errorf("%d search result mismatches", mismatchCount)
+	}
+}
+
+// TestConcurrentWrites tests multiple goroutines writing, then verifies after close
+func TestConcurrentWrites(t *testing.T) {
+	tmpfile := tempFilename()
+	defer os.Remove(tmpfile)
+	defer os.Remove(tmpfile + ".wal")
+
+	const goroutines = 10
+	const vectorsPerRoutine = 100
+	const dimensions = 64
+
+	t.Log("Starting concurrent writes...")
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errors := make(chan error, goroutines)
+
+	// Launch concurrent writers
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(routineID int) {
+			defer wg.Done()
+
+			for i := 0; i < vectorsPerRoutine; i++ {
+				id := fmt.Sprintf("routine%02d_vec%04d", routineID, i)
+				vector := randomVector(dimensions)
+				err := nest.Store(id, vector)
+				if err != nil {
+					errors <- fmt.Errorf("routine %d, vector %d: %w", routineID, i, err)
+					return
+				}
+			}
+		}(g)
+	}
+
+	wg.Wait()
+	close(errors)
+
+	// Check for errors
+	for err := range errors {
+		t.Errorf("Concurrent write error: %v", err)
+	}
+
+	expectedCount := int64(goroutines * vectorsPerRoutine)
+	count := nest.Count()
+	if count != expectedCount {
+		t.Errorf("Expected count %d, got %d", expectedCount, count)
+	}
+
+	t.Logf("Concurrent writes completed: %d vectors", count)
+
+	nest.Close()
+
+	// Reopen and verify
+	t.Log("Verifying after reopen...")
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
+	}
+	defer nest.Close()
+
+	count = nest.Count()
+	if count != expectedCount {
+		t.Errorf("After reopen: Expected count %d, got %d", expectedCount, count)
+	}
+
+	t.Log("Concurrent writes test passed")
+}
+
+// TestCorruptionDetection tests that corrupted pages are detected and refused
+func TestCorruptionDetection(t *testing.T) {
+	tmpfile := tempFilename()
+	defer os.Remove(tmpfile)
+	defer os.Remove(tmpfile + ".wal")
+
+	const dimensions = 32
+
+	// Create a valid database
+	t.Log("Creating valid database...")
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        false, // Disable WAL for this test
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("corrupt%03d", i)
+		vector := randomVector(dimensions)
+		nest.Store(id, vector)
+	}
+
+	nest.Close()
+
+	// Corrupt the file
+	t.Log("Corrupting database file...")
+	file, err := os.OpenFile(tmpfile, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatalf("Failed to open file for corruption: %v", err)
+	}
+
+	// Corrupt header checksum area
+	corruptData := []byte{0xFF, 0xFF, 0xFF, 0xFF}
+	_, err = file.WriteAt(corruptData, 4064) // Checksum location in header
+	file.Close()
+
+	if err != nil {
+		t.Fatalf("Failed to corrupt file: %v", err)
+	}
+
+	// Try to open corrupted database
+	t.Log("Attempting to open corrupted database...")
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        false,
+	})
+
+	if err == nil {
+		nest.Close()
+		t.Error("Expected error when opening corrupted database, got nil")
+	} else {
+		t.Logf("Corruption detected correctly: %v", err)
+	}
+}
+
+// TestPartialWAL tests handling of incomplete WAL entries
+func TestPartialWAL(t *testing.T) {
+	tmpfile := tempFilename()
+	walFile := tmpfile + ".wal"
+	defer os.Remove(tmpfile)
+	defer os.Remove(walFile)
+
+	const dimensions = 32
+
+	// Create database and write some WAL entries
+	t.Log("Creating database with WAL entries...")
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("partial%03d", i)
+		vector := randomVector(dimensions)
+		nest.Store(id, vector)
+	}
+
+	// Flush WAL
+	if nest.wal != nil {
+		nest.wal.Flush()
+	}
+
+	nest.Close()
+
+	// Truncate WAL file to simulate partial write
+	t.Log("Truncating WAL file to simulate crash...")
+	info, err := os.Stat(walFile)
+	if err != nil {
+		t.Skipf("WAL file not found, skipping test")
+		return
+	}
+
+	// Truncate to 75% of original size
+	newSize := info.Size() * 3 / 4
+	err = os.Truncate(walFile, newSize)
+	if err != nil {
+		t.Fatalf("Failed to truncate WAL: %v", err)
+	}
+
+	// Try to open database with partial WAL
+	t.Log("Opening database with partial WAL...")
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+
+	if err != nil {
+		// Partial WAL should either recover gracefully or fail cleanly
+		t.Logf("Failed to open with partial WAL (expected): %v", err)
+	} else {
+		defer nest.Close()
+		count := nest.Count()
+		t.Logf("Opened with partial WAL, recovered %d vectors", count)
+	}
+}
+
+// TestMultipleRestarts performs close/reopen cycle 5 times
+func TestMultipleRestarts(t *testing.T) {
+	tmpfile := tempFilename()
+	defer os.Remove(tmpfile)
+	defer os.Remove(tmpfile + ".wal")
+
+	const cycles = 5
+	const vectorsPerCycle = 50
+	const dimensions = 64
+
+	for cycle := 0; cycle < cycles; cycle++ {
+		t.Logf("Cycle %d: Opening database...", cycle+1)
+
+		nest, err := Open(tmpfile, Options{
+			Dimensions: dimensions,
+			Distance:   "cosine",
+			WAL:        true,
+		})
+		if err != nil {
+			t.Fatalf("Cycle %d: Failed to open database: %v", cycle+1, err)
+		}
+
+		// Add vectors for this cycle
+		for i := 0; i < vectorsPerCycle; i++ {
+			id := fmt.Sprintf("cycle%d_vec%03d", cycle, i)
+			vector := randomVector(dimensions)
+			nest.Store(id, vector)
+		}
+
+		expectedCount := int64((cycle + 1) * vectorsPerCycle)
+		count := nest.Count()
+		if count != expectedCount {
+			t.Errorf("Cycle %d: Expected count %d, got %d", cycle+1, expectedCount, count)
+		}
+
+		t.Logf("Cycle %d: Stored %d vectors (total: %d)", cycle+1, vectorsPerCycle, count)
+
+		nest.Close()
+	}
+
+	// Final verification
+	t.Log("Final verification...")
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Final open failed: %v", err)
+	}
+	defer nest.Close()
+
+	expectedTotal := int64(cycles * vectorsPerCycle)
+	count := nest.Count()
+	if count != expectedTotal {
+		t.Errorf("Final count: Expected %d, got %d", expectedTotal, count)
+	}
+
+	// Verify all vectors from all cycles
+	missingCount := 0
+	for cycle := 0; cycle < cycles; cycle++ {
+		for i := 0; i < vectorsPerCycle; i++ {
+			id := fmt.Sprintf("cycle%d_vec%03d", cycle, i)
+			if !nest.Has(id) {
+				t.Errorf("Vector %s missing", id)
+				missingCount++
+			}
+		}
+	}
+
+	if missingCount == 0 {
+		t.Logf("Multiple restarts test passed: all %d vectors present", expectedTotal)
+	} else {
+		t.Errorf("%d vectors missing after %d restart cycles", missingCount, cycles)
+	}
+}
+
+// TestUpdateAfterRestart verifies updates work after restart
+func TestUpdateAfterRestart(t *testing.T) {
+	tmpfile := tempFilename()
+	defer os.Remove(tmpfile)
+	defer os.Remove(tmpfile + ".wal")
+
+	const dimensions = 32
+
+	// Initial store
+	t.Log("Initial store...")
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	originalVector := randomVector(dimensions)
+	nest.Store("update_test", originalVector)
+	nest.Close()
+
+	// Reopen and update
+	t.Log("Reopening and updating...")
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
+	}
+
+	updatedVector := randomVector(dimensions)
+	nest.Store("update_test", updatedVector) // Update same ID
+
+	// Count should still be 1
+	count := nest.Count()
+	if count != 1 {
+		t.Errorf("Expected count 1 after update, got %d", count)
+	}
+
+	// Get updated vector
+	treasure, err := nest.Get("update_test")
+	if err != nil {
+		t.Fatalf("Failed to get updated vector: %v", err)
+	}
+
+	// Verify it's the updated vector (not original)
+	// Check that distances differ
+	originalDist := CosineSimilarity(updatedVector, originalVector)
+	currentDist := CosineSimilarity(treasure.Vector, updatedVector)
+
+	if currentDist > originalDist {
+		t.Errorf("Updated vector not properly stored: current closer to original than to updated")
+	}
+
+	nest.Close()
+
+	// Reopen and verify update persisted
+	t.Log("Final verification...")
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to reopen for verification: %v", err)
+	}
+	defer nest.Close()
+
+	treasure, err = nest.Get("update_test")
+	if err != nil {
+		t.Fatalf("Failed to get vector after final reopen: %v", err)
+	}
+
+	// Verify it's still the updated vector
+	finalDist := CosineSimilarity(treasure.Vector, updatedVector)
+	if finalDist > 0.01 { // Should be very close (floating point tolerance)
+		t.Errorf("Updated vector not persisted correctly")
+	}
+
+	t.Log("Update after restart test passed")
+}
+
+// TestDeleteAfterRestart verifies deletes work after restart (when implemented)
+func TestDeleteAfterRestart(t *testing.T) {
+	t.Skip("Delete not yet implemented")
+
+	tmpfile := tempFilename()
+	defer os.Remove(tmpfile)
+	defer os.Remove(tmpfile + ".wal")
+
+	const dimensions = 32
+
+	// Store some vectors
+	nest, err := Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	nest.Store("delete_test_1", randomVector(dimensions))
+	nest.Store("delete_test_2", randomVector(dimensions))
+	nest.Store("delete_test_3", randomVector(dimensions))
+
+	// Delete one
+	err = nest.Remove("delete_test_2")
+	if err != nil {
+		t.Fatalf("Failed to delete: %v", err)
+	}
+
+	nest.Close()
+
+	// Reopen and verify
+	nest, err = Open(tmpfile, Options{
+		Dimensions: dimensions,
+		Distance:   "cosine",
+		WAL:        true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
+	}
+	defer nest.Close()
+
+	if nest.Has("delete_test_2") {
+		t.Error("Deleted vector still present after restart")
+	}
+
+	if !nest.Has("delete_test_1") || !nest.Has("delete_test_3") {
+		t.Error("Non-deleted vectors missing after restart")
+	}
+}
+
+// Helper functions
+
+func randomVector(dimensions int) []float32 {
+	vector := make([]float32, dimensions)
+	for i := range vector {
+		vector[i] = rand.Float32()*2 - 1 // Range [-1, 1]
+	}
+	return vector
+}
+
+func tempFilename() string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("magpie_integration_test_%d.db", time.Now().UnixNano()))
+}

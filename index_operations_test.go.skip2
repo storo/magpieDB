@@ -1,0 +1,1460 @@
+package magpie
+
+import (
+	"fmt"
+	"math/rand"
+	"sync"
+	"testing"
+	"time"
+)
+
+// =============================================================================
+// UNIT TESTS - Basic Remove Operations (15 tests)
+// =============================================================================
+
+// TestIndexRemoveSingleNode tests removing a single isolated node
+func TestIndexRemoveSingleNode(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add single node
+	err := idx.Add("node1", []float32{1.0, 2.0, 3.0})
+	if err != nil {
+		t.Fatalf("Failed to add node: %v", err)
+	}
+
+	// Verify it exists
+	if idx.Count() != 1 {
+		t.Fatalf("Expected 1 node, got %d", idx.Count())
+	}
+
+	// Remove it
+	err = idx.Remove("node1")
+	if err != nil {
+		t.Fatalf("Failed to remove node: %v", err)
+	}
+
+	// Verify it's gone
+	if idx.Count() != 0 {
+		t.Fatalf("Expected 0 nodes after removal, got %d", idx.Count())
+	}
+
+	_, exists := idx.Get("node1")
+	if exists {
+		t.Error("Node should not exist after removal")
+	}
+}
+
+// TestIndexRemoveNonExistent tests removing a non-existent node
+func TestIndexRemoveNonExistent(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	err := idx.Remove("nonexistent")
+	if err != ErrVectorNotFound {
+		t.Errorf("Expected ErrVectorNotFound, got %v", err)
+	}
+}
+
+// TestIndexRemoveWithNeighbors tests removing a node with neighbors
+func TestIndexRemoveWithNeighbors(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add multiple nodes (will be connected in HNSW graph)
+	for i := 0; i < 10; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove middle node
+	err := idx.Remove("node5")
+	if err != nil {
+		t.Fatalf("Failed to remove node: %v", err)
+	}
+
+	// Verify count
+	if idx.Count() != 9 {
+		t.Fatalf("Expected 9 nodes after removal, got %d", idx.Count())
+	}
+
+	// Verify node is gone
+	_, exists := idx.Get("node5")
+	if exists {
+		t.Error("Removed node should not exist")
+	}
+}
+
+// TestIndexRemoveCleansNeighborLists tests that removed node is cleaned from all neighbor lists
+func TestIndexRemoveCleansNeighborLists(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 10; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove a node
+	err := idx.Remove("node5")
+	if err != nil {
+		t.Fatalf("Failed to remove node: %v", err)
+	}
+
+	// Check that no remaining node has "node5" in their neighbor lists
+	idx.mu.RLock()
+	for _, node := range idx.nodes {
+		for level := 0; level <= node.Level; level++ {
+			for _, neighborID := range node.Neighbors[level] {
+				if neighborID == "node5" {
+					t.Errorf("Node %s still has removed node5 as neighbor at level %d", node.ID, level)
+				}
+			}
+		}
+	}
+	idx.mu.RUnlock()
+}
+
+// TestIndexRemoveUpdatesIncomingLinks tests that incoming links are properly removed
+func TestIndexRemoveUpdatesIncomingLinks(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes in sequence so they form predictable connections
+	for i := 0; i < 5; i++ {
+		vec := []float32{float32(i), 0, 0}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Get neighbor count before removal
+	node0, _ := idx.Get("node0")
+	beforeCount := len(node0.Neighbors[0])
+
+	// Find a node that has node0 as neighbor
+	var targetNode string
+	idx.mu.RLock()
+	for id, node := range idx.nodes {
+		if id == "node0" {
+			continue
+		}
+		for level := 0; level <= node.Level; level++ {
+			for _, nid := range node.Neighbors[level] {
+				if nid == "node0" {
+					targetNode = id
+					break
+				}
+			}
+		}
+		if targetNode != "" {
+			break
+		}
+	}
+	idx.mu.RUnlock()
+
+	if targetNode != "" {
+		// Remove target node
+		err := idx.Remove(targetNode)
+		if err != nil {
+			t.Fatalf("Failed to remove %s: %v", targetNode, err)
+		}
+
+		// Verify node0 no longer has targetNode as neighbor
+		node0, _ = idx.Get("node0")
+		for level := 0; level <= node0.Level; level++ {
+			for _, nid := range node0.Neighbors[level] {
+				if nid == targetNode {
+					t.Errorf("node0 still has removed %s as neighbor", targetNode)
+				}
+			}
+		}
+
+		// Count should be updated
+		afterCount := len(node0.Neighbors[0])
+		if afterCount >= beforeCount {
+			t.Logf("Warning: Expected neighbor count to decrease from %d, got %d", beforeCount, afterCount)
+		}
+	}
+}
+
+// TestIndexRemoveMaintainsConnectivity tests that graph remains connected after removal
+func TestIndexRemoveMaintainsConnectivity(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 20; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove several nodes
+	for i := 5; i < 10; i++ {
+		err := idx.Remove(fmt.Sprintf("node%d", i))
+		if err != nil {
+			t.Fatalf("Failed to remove node%d: %v", i, err)
+		}
+	}
+
+	// Verify remaining nodes can still be searched
+	query := []float32{15.0, 30.0, 45.0}
+	results := idx.Search(query, 5)
+
+	if len(results) == 0 {
+		t.Error("Search returned no results after removals")
+	}
+
+	// All results should be valid nodes
+	for _, result := range results {
+		_, exists := idx.Get(result.ID)
+		if !exists {
+			t.Errorf("Search returned deleted node: %s", result.ID)
+		}
+	}
+}
+
+// TestIndexRemoveEntryPoint tests removing the entry point node
+func TestIndexRemoveEntryPoint(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 10; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Get entry point
+	idx.mu.RLock()
+	oldEntryID := ""
+	if idx.entryPoint != nil {
+		oldEntryID = idx.entryPoint.ID
+	}
+	idx.mu.RUnlock()
+
+	if oldEntryID == "" {
+		t.Fatal("No entry point set")
+	}
+
+	// Remove entry point
+	err := idx.Remove(oldEntryID)
+	if err != nil {
+		t.Fatalf("Failed to remove entry point: %v", err)
+	}
+
+	// Verify new entry point is set
+	idx.mu.RLock()
+	newEntryPoint := idx.entryPoint
+	idx.mu.RUnlock()
+
+	if newEntryPoint == nil {
+		t.Fatal("Entry point should be reassigned after removal")
+	}
+
+	if newEntryPoint.ID == oldEntryID {
+		t.Error("Entry point should be different after removal")
+	}
+
+	// Verify search still works
+	query := []float32{5.0, 10.0, 15.0}
+	results := idx.Search(query, 3)
+
+	if len(results) == 0 {
+		t.Error("Search should work after entry point removal")
+	}
+}
+
+// TestIndexRemoveEntryPointSelection tests that the best entry point is selected
+func TestIndexRemoveEntryPointSelection(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add many nodes to ensure multi-level graph
+	for i := 0; i < 50; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Get current entry point level
+	idx.mu.RLock()
+	oldEntryID := idx.entryPoint.ID
+	oldMaxLevel := idx.maxLevel
+	idx.mu.RUnlock()
+
+	// Remove entry point
+	err := idx.Remove(oldEntryID)
+	if err != nil {
+		t.Fatalf("Failed to remove entry point: %v", err)
+	}
+
+	// New entry point should be the highest level node
+	idx.mu.RLock()
+	newMaxLevel := idx.maxLevel
+	if idx.entryPoint != nil && idx.entryPoint.Level != newMaxLevel {
+		t.Errorf("Entry point level %d doesn't match maxLevel %d", idx.entryPoint.Level, newMaxLevel)
+	}
+
+	// Max level should be <= old max level
+	if newMaxLevel > oldMaxLevel {
+		t.Errorf("New max level %d should not exceed old max level %d", newMaxLevel, oldMaxLevel)
+	}
+	idx.mu.RUnlock()
+}
+
+// TestIndexRemovePreservesGraphProperties tests that HNSW properties are maintained
+func TestIndexRemovePreservesGraphProperties(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 30; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove some nodes
+	for i := 10; i < 15; i++ {
+		err := idx.Remove(fmt.Sprintf("node%d", i))
+		if err != nil {
+			t.Fatalf("Failed to remove node%d: %v", i, err)
+		}
+	}
+
+	// Check graph properties
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	for _, node := range idx.nodes {
+		// Check neighbor count constraints
+		for level := 0; level <= node.Level; level++ {
+			maxConn := idx.m
+			if level == 0 {
+				maxConn = idx.m * 2
+			}
+
+			neighborCount := len(node.Neighbors[level])
+			if neighborCount > maxConn {
+				t.Errorf("Node %s level %d has %d neighbors, exceeds max %d",
+					node.ID, level, neighborCount, maxConn)
+			}
+		}
+
+		// Check all neighbors exist
+		for level := 0; level <= node.Level; level++ {
+			for _, nid := range node.Neighbors[level] {
+				if _, exists := idx.nodes[nid]; !exists {
+					t.Errorf("Node %s has non-existent neighbor %s at level %d",
+						node.ID, nid, level)
+				}
+			}
+		}
+	}
+}
+
+// TestIndexRemoveLayerStructure tests that layer structure is maintained
+func TestIndexRemoveLayerStructure(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 25; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove nodes
+	for i := 0; i < 5; i++ {
+		err := idx.Remove(fmt.Sprintf("node%d", i))
+		if err != nil {
+			t.Fatalf("Failed to remove node%d: %v", i, err)
+		}
+	}
+
+	// Verify layer structure
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	// maxLevel should be <= highest node level
+	maxNodeLevel := -1
+	for _, node := range idx.nodes {
+		if node.Level > maxNodeLevel {
+			maxNodeLevel = node.Level
+		}
+	}
+
+	if idx.maxLevel != maxNodeLevel {
+		t.Errorf("maxLevel %d doesn't match highest node level %d", idx.maxLevel, maxNodeLevel)
+	}
+
+	// Each node should have neighbor lists for levels 0..Level
+	for _, node := range idx.nodes {
+		if len(node.Neighbors) != node.Level+1 {
+			t.Errorf("Node %s has %d neighbor lists but level is %d",
+				node.ID, len(node.Neighbors), node.Level)
+		}
+	}
+}
+
+// TestIndexOptimizeEntryPoint tests entry point optimization
+func TestIndexOptimizeEntryPoint(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 20; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Optimize index
+	err := idx.OptimizeIndex()
+	if err != nil {
+		t.Fatalf("Failed to optimize index: %v", err)
+	}
+
+	// Entry point should be valid
+	idx.mu.RLock()
+	if idx.entryPoint == nil {
+		t.Error("Entry point should not be nil after optimization")
+	} else {
+		_, exists := idx.nodes[idx.entryPoint.ID]
+		if !exists {
+			t.Error("Entry point should exist in nodes map")
+		}
+
+		if idx.entryPoint.Level != idx.maxLevel {
+			t.Errorf("Entry point level %d should equal maxLevel %d",
+				idx.entryPoint.Level, idx.maxLevel)
+		}
+	}
+	idx.mu.RUnlock()
+}
+
+// TestIndexDiagnostics tests diagnostics functionality
+func TestIndexDiagnostics(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Empty index
+	diag := idx.Diagnostics()
+	if diag.NodeCount != 0 {
+		t.Errorf("Expected 0 nodes, got %d", diag.NodeCount)
+	}
+
+	// Add nodes
+	for i := 0; i < 15; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	diag = idx.Diagnostics()
+	if diag.NodeCount != 15 {
+		t.Errorf("Expected 15 nodes, got %d", diag.NodeCount)
+	}
+
+	if diag.AvgDegree <= 0 {
+		t.Error("Average degree should be positive")
+	}
+
+	if diag.DanglingReferences != 0 {
+		t.Errorf("Fresh index should have no dangling references, got %d", diag.DanglingReferences)
+	}
+
+	if !diag.EntryPointValid {
+		t.Error("Entry point should be valid")
+	}
+}
+
+// TestIndexDetectDanglingNodes tests detection of dangling references
+func TestIndexDetectDanglingNodes(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 10; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Manually corrupt the graph by adding dangling reference
+	idx.mu.Lock()
+	if node, exists := idx.nodes["node5"]; exists {
+		node.Neighbors[0] = append(node.Neighbors[0], "nonexistent")
+	}
+	idx.mu.Unlock()
+
+	// Diagnostics should detect it
+	diag := idx.Diagnostics()
+	if diag.DanglingReferences == 0 {
+		t.Error("Should detect dangling reference")
+	}
+
+	// Cleanup should fix it
+	err := idx.OptimizeIndex()
+	if err != nil {
+		t.Fatalf("Optimization failed: %v", err)
+	}
+
+	diag = idx.Diagnostics()
+	if diag.DanglingReferences != 0 {
+		t.Errorf("After cleanup, should have 0 dangling references, got %d", diag.DanglingReferences)
+	}
+}
+
+// TestIndexDetectOrphanedNodes tests detection of orphaned nodes
+func TestIndexDetectOrphanedNodes(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 10; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Manually create orphaned node (remove all incoming connections)
+	idx.mu.Lock()
+	targetID := "node7"
+	for _, node := range idx.nodes {
+		if node.ID == targetID {
+			continue
+		}
+		for level := 0; level <= node.Level; level++ {
+			filtered := make([]string, 0)
+			for _, nid := range node.Neighbors[level] {
+				if nid != targetID {
+					filtered = append(filtered, nid)
+				}
+			}
+			node.Neighbors[level] = filtered
+		}
+	}
+	idx.mu.Unlock()
+
+	// Diagnostics should detect orphaned node
+	diag := idx.Diagnostics()
+	if diag.OrphanedNodes == 0 && targetID != idx.entryPoint.ID {
+		t.Error("Should detect orphaned node")
+	}
+}
+
+// =============================================================================
+// INTEGRATION TESTS (12 tests)
+// =============================================================================
+
+// TestIndexRemoveWithConcurrentSearch tests remove during concurrent searches
+func TestIndexRemoveWithConcurrentSearch(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 100; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Run concurrent operations
+	var wg sync.WaitGroup
+	errors := make(chan error, 100)
+
+	// Search goroutines
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				query := []float32{float32(id * 10), float32(id * 20), float32(id * 30)}
+				results := idx.Search(query, 5)
+
+				// Verify all results are valid
+				for _, r := range results {
+					_, exists := idx.Get(r.ID)
+					if !exists {
+						errors <- fmt.Errorf("search returned deleted node: %s", r.ID)
+						return
+					}
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}(i)
+	}
+
+	// Remove goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 50; i < 70; i++ {
+			err := idx.Remove(fmt.Sprintf("node%d", i))
+			if err != nil && err != ErrVectorNotFound {
+				errors <- err
+				return
+			}
+			time.Sleep(time.Millisecond * 2)
+		}
+	}()
+
+	wg.Wait()
+	close(errors)
+
+	// Check for errors
+	for err := range errors {
+		t.Error(err)
+	}
+}
+
+// TestIndexRemoveWithConcurrentInsert tests remove during concurrent inserts
+func TestIndexRemoveWithConcurrentInsert(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add initial nodes
+	for i := 0; i < 50; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	errors := make(chan error, 100)
+
+	// Insert goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 100; i < 150; i++ {
+			vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+			err := idx.Add(fmt.Sprintf("new%d", i), vec)
+			if err != nil {
+				errors <- err
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	// Remove goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 25; i++ {
+			err := idx.Remove(fmt.Sprintf("node%d", i))
+			if err != nil && err != ErrVectorNotFound {
+				errors <- err
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	wg.Wait()
+	close(errors)
+
+	for err := range errors {
+		t.Error(err)
+	}
+
+	// Verify no dangling references
+	diag := idx.Diagnostics()
+	if diag.DanglingReferences != 0 {
+		t.Errorf("Found %d dangling references after concurrent ops", diag.DanglingReferences)
+	}
+}
+
+// TestIndexMassDelete tests removing many nodes in sequence
+func TestIndexMassDelete(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add many nodes
+	nodeCount := 200
+	for i := 0; i < nodeCount; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove half of them
+	for i := 0; i < nodeCount/2; i++ {
+		err := idx.Remove(fmt.Sprintf("node%d", i))
+		if err != nil {
+			t.Fatalf("Failed to remove node%d: %v", i, err)
+		}
+	}
+
+	// Verify count
+	if idx.Count() != nodeCount/2 {
+		t.Errorf("Expected %d nodes, got %d", nodeCount/2, idx.Count())
+	}
+
+	// Verify no dangling references
+	diag := idx.Diagnostics()
+	if diag.DanglingReferences != 0 {
+		t.Errorf("Found %d dangling references", diag.DanglingReferences)
+	}
+
+	// Verify search still works well
+	query := []float32{150.0, 300.0, 450.0}
+	results := idx.Search(query, 10)
+
+	if len(results) == 0 {
+		t.Error("Search should return results after mass delete")
+	}
+
+	// All results should be from the remaining half
+	for _, r := range results {
+		_, exists := idx.Get(r.ID)
+		if !exists {
+			t.Errorf("Search returned non-existent node: %s", r.ID)
+		}
+	}
+}
+
+// TestIndexRemoveSearchConsistency tests that search doesn't return deleted nodes
+func TestIndexRemoveSearchConsistency(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 50; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove some nodes
+	removedIDs := make(map[string]bool)
+	for i := 10; i < 20; i++ {
+		id := fmt.Sprintf("node%d", i)
+		removedIDs[id] = true
+		err := idx.Remove(id)
+		if err != nil {
+			t.Fatalf("Failed to remove %s: %v", id, err)
+		}
+	}
+
+	// Search multiple times
+	for i := 0; i < 20; i++ {
+		query := []float32{float32(rand.Intn(50)), float32(rand.Intn(100)), float32(rand.Intn(150))}
+		results := idx.Search(query, 10)
+
+		for _, r := range results {
+			if removedIDs[r.ID] {
+				t.Errorf("Search returned deleted node: %s", r.ID)
+			}
+
+			_, exists := idx.Get(r.ID)
+			if !exists {
+				t.Errorf("Search returned non-existent node: %s", r.ID)
+			}
+		}
+	}
+}
+
+// TestIndexRemoveSearchQuality tests that search quality is maintained after removes
+func TestIndexRemoveSearchQuality(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes in clusters
+	for cluster := 0; cluster < 5; cluster++ {
+		for i := 0; i < 20; i++ {
+			base := float32(cluster * 100)
+			vec := []float32{
+				base + float32(i),
+				base + float32(i*2),
+				base + float32(i*3),
+			}
+			err := idx.Add(fmt.Sprintf("c%d_node%d", cluster, i), vec)
+			if err != nil {
+				t.Fatalf("Failed to add node: %v", err)
+			}
+		}
+	}
+
+	// Search before removals
+	query := []float32{205.0, 410.0, 615.0} // Close to cluster 2
+	resultsBefore := idx.Search(query, 10)
+
+	// Remove some nodes from other clusters
+	for cluster := 0; cluster < 5; cluster++ {
+		if cluster == 2 {
+			continue // Don't remove from target cluster
+		}
+		for i := 0; i < 10; i++ {
+			id := fmt.Sprintf("c%d_node%d", cluster, i)
+			idx.Remove(id)
+		}
+	}
+
+	// Search after removals
+	resultsAfter := idx.Search(query, 10)
+
+	// Should still find nodes from cluster 2
+	cluster2Count := 0
+	for _, r := range resultsAfter {
+		if len(r.ID) > 2 && r.ID[0] == 'c' && r.ID[1] == '2' {
+			cluster2Count++
+		}
+	}
+
+	if cluster2Count == 0 {
+		t.Error("Search quality degraded: no results from target cluster")
+	}
+
+	// Average distance should be similar
+	avgDistBefore := float32(0)
+	for _, r := range resultsBefore {
+		avgDistBefore += r.Distance
+	}
+	if len(resultsBefore) > 0 {
+		avgDistBefore /= float32(len(resultsBefore))
+	}
+
+	avgDistAfter := float32(0)
+	for _, r := range resultsAfter {
+		avgDistAfter += r.Distance
+	}
+	if len(resultsAfter) > 0 {
+		avgDistAfter /= float32(len(resultsAfter))
+	}
+
+	// Quality should not degrade significantly (allow 50% tolerance)
+	if avgDistAfter > avgDistBefore*1.5 {
+		t.Logf("Search quality may have degraded: avg dist before %.4f, after %.4f",
+			avgDistBefore, avgDistAfter)
+	}
+}
+
+// TestIndexOptimizationImprovesSearch tests that optimization helps search quality
+func TestIndexOptimizationImprovesSearch(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 100; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove many nodes to potentially fragment graph
+	for i := 0; i < 50; i++ {
+		err := idx.Remove(fmt.Sprintf("node%d", i*2))
+		if err != nil {
+			t.Fatalf("Failed to remove: %v", err)
+		}
+	}
+
+	// Get diagnostics before optimization
+	diagBefore := idx.Diagnostics()
+
+	// Optimize
+	err := idx.OptimizeIndex()
+	if err != nil {
+		t.Fatalf("Optimization failed: %v", err)
+	}
+
+	// Get diagnostics after optimization
+	diagAfter := idx.Diagnostics()
+
+	// Dangling references should be cleaned up
+	if diagAfter.DanglingReferences > 0 {
+		t.Errorf("Optimization should clean dangling references, still have %d",
+			diagAfter.DanglingReferences)
+	}
+
+	// Entry point should be valid
+	if !diagAfter.EntryPointValid {
+		t.Error("Entry point should be valid after optimization")
+	}
+
+	t.Logf("Before optimization: %d dangling refs, %d orphaned nodes",
+		diagBefore.DanglingReferences, diagBefore.OrphanedNodes)
+	t.Logf("After optimization: %d dangling refs, %d orphaned nodes",
+		diagAfter.DanglingReferences, diagAfter.OrphanedNodes)
+}
+
+// TestIndexStatistics tests statistics collection
+func TestIndexStatistics(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Empty stats
+	stats := idx.Stats()
+	if stats.NodeCount != 0 {
+		t.Errorf("Expected 0 nodes, got %d", stats.NodeCount)
+	}
+
+	// Add nodes
+	for i := 0; i < 30; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	stats = idx.Stats()
+	if stats.NodeCount != 30 {
+		t.Errorf("Expected 30 nodes, got %d", stats.NodeCount)
+	}
+
+	if stats.AvgNeighbors <= 0 {
+		t.Error("Average neighbors should be positive")
+	}
+
+	if stats.MemoryUsage <= 0 {
+		t.Error("Memory usage should be positive")
+	}
+
+	if stats.MaxLevel < 0 {
+		t.Error("Max level should be non-negative")
+	}
+
+	t.Logf("Stats: %d nodes, %.2f avg neighbors, %d bytes memory, level %d",
+		stats.NodeCount, stats.AvgNeighbors, stats.MemoryUsage, stats.MaxLevel)
+}
+
+// TestIndexDiagnosticsAccuracy tests that diagnostics are accurate
+func TestIndexDiagnosticsAccuracy(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 25; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	diag := idx.Diagnostics()
+
+	// Manually count nodes
+	actualCount := idx.Count()
+	if diag.NodeCount != actualCount {
+		t.Errorf("Diagnostic node count %d doesn't match actual %d", diag.NodeCount, actualCount)
+	}
+
+	// Manually check max level
+	idx.mu.RLock()
+	actualMaxLevel := idx.maxLevel
+	idx.mu.RUnlock()
+
+	if diag.MaxLevel != actualMaxLevel {
+		t.Errorf("Diagnostic max level %d doesn't match actual %d", diag.MaxLevel, actualMaxLevel)
+	}
+
+	// Average degree should be reasonable (> 0 and <= m*2 for layer 0)
+	if diag.AvgDegree <= 0 || diag.AvgDegree > float64(idx.m*4) {
+		t.Errorf("Average degree %.2f seems unreasonable (m=%d)", diag.AvgDegree, idx.m)
+	}
+}
+
+// TestIndexRemoveWithTransaction tests remove integration with transactions
+func TestIndexRemoveWithTransaction(t *testing.T) {
+	// This test verifies that remove works correctly when called from transaction logic
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 20; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Simulate transaction deletes
+	deleteIDs := []string{"node5", "node10", "node15"}
+
+	for _, id := range deleteIDs {
+		err := idx.Remove(id)
+		if err != nil {
+			t.Fatalf("Failed to remove %s: %v", id, err)
+		}
+	}
+
+	// Verify all deleted
+	for _, id := range deleteIDs {
+		_, exists := idx.Get(id)
+		if exists {
+			t.Errorf("Node %s should be deleted", id)
+		}
+	}
+
+	// Verify count
+	expectedCount := 20 - len(deleteIDs)
+	if idx.Count() != expectedCount {
+		t.Errorf("Expected %d nodes, got %d", expectedCount, idx.Count())
+	}
+}
+
+// TestIndexRemoveWithCompaction tests remove integration with compaction
+func TestIndexRemoveWithCompaction(t *testing.T) {
+	// Simulates compaction scenario where tombstones trigger removes
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 50; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Mark nodes for deletion (simulating tombstones)
+	toDelete := make([]string, 0)
+	for i := 0; i < 50; i += 5 {
+		toDelete = append(toDelete, fmt.Sprintf("node%d", i))
+	}
+
+	// Remove all marked nodes (simulating compaction)
+	for _, id := range toDelete {
+		err := idx.Remove(id)
+		if err != nil {
+			t.Fatalf("Failed to remove %s: %v", id, err)
+		}
+	}
+
+	// Verify integrity after compaction
+	diag := idx.Diagnostics()
+	if diag.DanglingReferences != 0 {
+		t.Errorf("After compaction, should have no dangling refs, got %d", diag.DanglingReferences)
+	}
+
+	// Search should still work
+	query := []float32{25.0, 50.0, 75.0}
+	results := idx.Search(query, 5)
+
+	if len(results) == 0 {
+		t.Error("Search should work after compaction")
+	}
+}
+
+// TestIndexIntegrityAfterRemoves tests overall graph integrity after many removes
+func TestIndexIntegrityAfterRemoves(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add many nodes
+	for i := 0; i < 100; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove random nodes
+	rand.Seed(42)
+	removeCount := 0
+	for i := 0; i < 100; i++ {
+		if rand.Float32() < 0.3 { // 30% removal rate
+			err := idx.Remove(fmt.Sprintf("node%d", i))
+			if err != nil {
+				t.Fatalf("Failed to remove node%d: %v", i, err)
+			}
+			removeCount++
+		}
+	}
+
+	t.Logf("Removed %d nodes", removeCount)
+
+	// Check complete integrity
+	diag := idx.Diagnostics()
+
+	// No dangling references
+	if diag.DanglingReferences != 0 {
+		t.Errorf("Found %d dangling references", diag.DanglingReferences)
+	}
+
+	// Valid entry point
+	if !diag.EntryPointValid {
+		t.Error("Entry point should be valid")
+	}
+
+	// Correct node count
+	expectedCount := 100 - removeCount
+	if diag.NodeCount != expectedCount {
+		t.Errorf("Expected %d nodes, diagnostics reports %d", expectedCount, diag.NodeCount)
+	}
+
+	// All neighbor references are valid
+	idx.mu.RLock()
+	for _, node := range idx.nodes {
+		for level := 0; level <= node.Level; level++ {
+			for _, nid := range node.Neighbors[level] {
+				if _, exists := idx.nodes[nid]; !exists {
+					t.Errorf("Node %s has invalid neighbor %s at level %d", node.ID, nid, level)
+				}
+			}
+		}
+	}
+	idx.mu.RUnlock()
+}
+
+// =============================================================================
+// BENCHMARKS (5 tests)
+// =============================================================================
+
+// BenchmarkIndexRemove benchmarks basic remove operation
+func BenchmarkIndexRemove(b *testing.B) {
+	idx := NewHSNWIndex(128, 16, 200, EuclideanDistance)
+
+	// Pre-populate with nodes
+	nodeCount := 10000
+	for i := 0; i < nodeCount; i++ {
+		vec := make([]float32, 128)
+		for j := 0; j < 128; j++ {
+			vec[j] = rand.Float32()
+		}
+		idx.Add(fmt.Sprintf("node%d", i), vec)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		targetID := fmt.Sprintf("node%d", i%nodeCount)
+		idx.Remove(targetID)
+
+		// Re-add if we're looping
+		if i%nodeCount == 0 && i > 0 {
+			for j := 0; j < nodeCount; j++ {
+				vec := make([]float32, 128)
+				for k := 0; k < 128; k++ {
+					vec[k] = rand.Float32()
+				}
+				idx.Add(fmt.Sprintf("node%d", j), vec)
+			}
+		}
+	}
+}
+
+// BenchmarkIndexRemoveWithManyNeighbors benchmarks remove on high-degree nodes
+func BenchmarkIndexRemoveWithManyNeighbors(b *testing.B) {
+	idx := NewHSNWIndex(128, 32, 400, EuclideanDistance) // Higher M for more neighbors
+
+	// Pre-populate
+	nodeCount := 5000
+	for i := 0; i < nodeCount; i++ {
+		vec := make([]float32, 128)
+		for j := 0; j < 128; j++ {
+			vec[j] = rand.Float32()
+		}
+		idx.Add(fmt.Sprintf("node%d", i), vec)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		targetID := fmt.Sprintf("node%d", i%nodeCount)
+		idx.Remove(targetID)
+
+		if i%nodeCount == 0 && i > 0 {
+			// Repopulate
+			for j := 0; j < nodeCount; j++ {
+				vec := make([]float32, 128)
+				for k := 0; k < 128; k++ {
+					vec[k] = rand.Float32()
+				}
+				idx.Add(fmt.Sprintf("node%d", j), vec)
+			}
+		}
+	}
+}
+
+// BenchmarkIndexOptimize benchmarks index optimization
+func BenchmarkIndexOptimize(b *testing.B) {
+	idx := NewHSNWIndex(128, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 1000; i++ {
+		vec := make([]float32, 128)
+		for j := 0; j < 128; j++ {
+			vec[j] = rand.Float32()
+		}
+		idx.Add(fmt.Sprintf("node%d", i), vec)
+	}
+
+	// Remove some to create optimization opportunities
+	for i := 0; i < 200; i++ {
+		idx.Remove(fmt.Sprintf("node%d", i*5))
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		idx.OptimizeIndex()
+	}
+}
+
+// BenchmarkIndexDiagnostics benchmarks diagnostics collection
+func BenchmarkIndexDiagnostics(b *testing.B) {
+	idx := NewHSNWIndex(128, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 5000; i++ {
+		vec := make([]float32, 128)
+		for j := 0; j < 128; j++ {
+			vec[j] = rand.Float32()
+		}
+		idx.Add(fmt.Sprintf("node%d", i), vec)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_ = idx.Diagnostics()
+	}
+}
+
+// BenchmarkIndexSearchAfterRemoves benchmarks search performance after removals
+func BenchmarkIndexSearchAfterRemoves(b *testing.B) {
+	idx := NewHSNWIndex(128, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 10000; i++ {
+		vec := make([]float32, 128)
+		for j := 0; j < 128; j++ {
+			vec[j] = rand.Float32()
+		}
+		idx.Add(fmt.Sprintf("node%d", i), vec)
+	}
+
+	// Remove 30%
+	for i := 0; i < 3000; i++ {
+		idx.Remove(fmt.Sprintf("node%d", i*3))
+	}
+
+	// Prepare queries
+	queries := make([][]float32, 100)
+	for i := 0; i < 100; i++ {
+		queries[i] = make([]float32, 128)
+		for j := 0; j < 128; j++ {
+			queries[i][j] = rand.Float32()
+		}
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		query := queries[i%100]
+		_ = idx.Search(query, 10)
+	}
+}
+
+// =============================================================================
+// TOPOLOGY TESTS (3 tests)
+// =============================================================================
+
+// TestIndexGraphConnectivity tests that graph remains connected
+func TestIndexGraphConnectivity(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 40; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove some nodes
+	for i := 0; i < 15; i++ {
+		err := idx.Remove(fmt.Sprintf("node%d", i*2))
+		if err != nil {
+			t.Fatalf("Failed to remove: %v", err)
+		}
+	}
+
+	// Check connectivity via BFS from entry point
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	if idx.entryPoint == nil {
+		t.Fatal("Entry point should exist")
+	}
+
+	visited := make(map[string]bool)
+	queue := []string{idx.entryPoint.ID}
+	visited[idx.entryPoint.ID] = true
+
+	// BFS at layer 0
+	for len(queue) > 0 {
+		currentID := queue[0]
+		queue = queue[1:]
+
+		node, exists := idx.nodes[currentID]
+		if !exists {
+			continue
+		}
+
+		if len(node.Neighbors) > 0 {
+			for _, nid := range node.Neighbors[0] {
+				if !visited[nid] {
+					visited[nid] = true
+					queue = append(queue, nid)
+				}
+			}
+		}
+	}
+
+	// All nodes should be reachable
+	unreachable := 0
+	for id := range idx.nodes {
+		if !visited[id] {
+			unreachable++
+			t.Logf("Node %s is unreachable from entry point", id)
+		}
+	}
+
+	if unreachable > 0 {
+		t.Errorf("Found %d unreachable nodes (graph is disconnected)", unreachable)
+	}
+}
+
+// TestIndexEntryPointReachability tests that entry point is optimal
+func TestIndexEntryPointReachability(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 30; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove some nodes including potential entry points
+	for i := 0; i < 10; i++ {
+		err := idx.Remove(fmt.Sprintf("node%d", i))
+		if err != nil {
+			t.Fatalf("Failed to remove: %v", err)
+		}
+	}
+
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	// Entry point should be highest level node
+	if idx.entryPoint == nil {
+		t.Fatal("Entry point should exist")
+	}
+
+	for _, node := range idx.nodes {
+		if node.Level > idx.entryPoint.Level {
+			t.Errorf("Found node %s with level %d higher than entry point level %d",
+				node.ID, node.Level, idx.entryPoint.Level)
+		}
+	}
+
+	// Entry point level should equal maxLevel
+	if idx.entryPoint.Level != idx.maxLevel {
+		t.Errorf("Entry point level %d should equal maxLevel %d",
+			idx.entryPoint.Level, idx.maxLevel)
+	}
+}
+
+// TestIndexLayerIntegrity tests layer structure integrity
+func TestIndexLayerIntegrity(t *testing.T) {
+	idx := NewHSNWIndex(3, 16, 200, EuclideanDistance)
+
+	// Add nodes
+	for i := 0; i < 50; i++ {
+		vec := []float32{float32(i), float32(i * 2), float32(i * 3)}
+		err := idx.Add(fmt.Sprintf("node%d", i), vec)
+		if err != nil {
+			t.Fatalf("Failed to add node%d: %v", i, err)
+		}
+	}
+
+	// Remove nodes from various layers
+	for i := 0; i < 20; i++ {
+		err := idx.Remove(fmt.Sprintf("node%d", i*2))
+		if err != nil {
+			t.Fatalf("Failed to remove: %v", err)
+		}
+	}
+
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	// Check layer structure
+	layerCounts := make(map[int]int)
+	for _, node := range idx.nodes {
+		for level := 0; level <= node.Level; level++ {
+			layerCounts[level]++
+		}
+
+		// Verify neighbor lists match level
+		if len(node.Neighbors) != node.Level+1 {
+			t.Errorf("Node %s has %d neighbor lists but level is %d",
+				node.ID, len(node.Neighbors), node.Level)
+		}
+
+		// Verify neighbors at each level
+		for level := 0; level <= node.Level; level++ {
+			for _, nid := range node.Neighbors[level] {
+				neighbor, exists := idx.nodes[nid]
+				if !exists {
+					t.Errorf("Node %s has non-existent neighbor %s at level %d",
+						node.ID, nid, level)
+					continue
+				}
+
+				// Neighbor must exist at this level
+				if neighbor.Level < level {
+					t.Errorf("Node %s (level %d) has neighbor %s (level %d) at level %d",
+						node.ID, node.Level, nid, neighbor.Level, level)
+				}
+			}
+		}
+	}
+
+	// Layer 0 should have all nodes
+	if layerCounts[0] != len(idx.nodes) {
+		t.Errorf("Layer 0 should have %d nodes, has %d", len(idx.nodes), layerCounts[0])
+	}
+
+	// Higher layers should have fewer nodes (exponential decay)
+	for level := 1; level <= idx.maxLevel; level++ {
+		if layerCounts[level] > layerCounts[level-1] {
+			t.Errorf("Layer %d has more nodes (%d) than layer %d (%d)",
+				level, layerCounts[level], level-1, layerCounts[level-1])
+		}
+	}
+}

@@ -1,0 +1,7 @@
+# github.com/voidlab/magpiedb [github.com/voidlab/magpiedb.test]
+./compact.go:70:23: undefined: storeMetadataInStorage
+./compact.go:87:13: undefined: writeVectorToStoragePage
+./magpie.go:220:14: undefined: NewReindexWorker
+./magpie.go:228:14: undefined: NewBackupWorker
+./magpie.go:236:14: undefined: NewStatisticsWorker
+FAIL	github.com/voidlab/magpiedb [build failed]

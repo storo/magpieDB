@@ -1,0 +1,7 @@
+goos: linux
+goarch: amd64
+pkg: github.com/voidlab/magpiedb
+cpu: Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz
+BenchmarkInsert10KVectors-8   	       1	76516568128 ns/op	       130.7 inserts/sec	         7.652 ms/insert	     76516 total_ms	3938601744 B/op	32139637 allocs/op
+PASS
+ok  	github.com/voidlab/magpiedb	76.645s

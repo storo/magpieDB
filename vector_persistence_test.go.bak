@@ -1,0 +1,637 @@
+package magpie
+
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
+
+// TestPersistVector tests writing a vector to a vector page
+func TestPersistVector(t *testing.T) {
+	// Create temporary database
+	path := "/tmp/test_persist_vector.magpie"
+	defer os.Remove(path)
+
+	nest, err := Open(path, Options{Dimensions: 4})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer nest.Close()
+
+	// Store a vector
+	vector := []float32{0.1, 0.2, 0.3, 0.4}
+	err = nest.Store("vec1", vector)
+	if err != nil {
+		t.Fatalf("failed to store vector: %v", err)
+	}
+
+	// Verify vector pages were created
+	if len(nest.vectorPages) == 0 {
+		t.Fatal("expected vector pages map to have entries")
+	}
+
+	// Verify vector page mapping exists
+	pageNum, exists := nest.vectorPages["vec1"]
+	if !exists {
+		t.Fatal("expected vector page mapping for vec1")
+	}
+
+	// Verify page was allocated
+	if pageNum == 0 {
+		t.Fatal("expected non-zero page number")
+	}
+}
+
+// TestLoadVector tests reading a vector from a page
+func TestLoadVector(t *testing.T) {
+	path := "/tmp/test_load_vector.magpie"
+	defer os.Remove(path)
+
+	nest, err := Open(path, Options{Dimensions: 4})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+
+	// Store a vector
+	originalVector := []float32{0.1, 0.2, 0.3, 0.4}
+	metadata := map[string]interface{}{
+		"title": "Test Vector",
+		"count": 42,
+	}
+	err = nest.Store("vec1", originalVector, metadata)
+	if err != nil {
+		t.Fatalf("failed to store vector: %v", err)
+	}
+
+	nest.Close()
+
+	// Reopen database and load vector
+	nest2, err := Open(path, Options{Dimensions: 4})
+	if err != nil {
+		t.Fatalf("failed to reopen database: %v", err)
+	}
+	defer nest2.Close()
+
+	// Load the vector
+	loadedVector, loadedMetadata, err := nest2.loadVector("vec1")
+	if err != nil {
+		t.Fatalf("failed to load vector: %v", err)
+	}
+
+	// Verify vector data
+	if len(loadedVector) != len(originalVector) {
+		t.Fatalf("expected %d dimensions, got %d", len(originalVector), len(loadedVector))
+	}
+
+	for i := range originalVector {
+		if loadedVector[i] != originalVector[i] {
+			t.Errorf("dimension %d: expected %.2f, got %.2f", i, originalVector[i], loadedVector[i])
+		}
+	}
+
+	// Verify metadata
+	if loadedMetadata["title"] != "Test Vector" {
+		t.Errorf("expected title 'Test Vector', got %v", loadedMetadata["title"])
+	}
+
+	// JSON unmarshaling converts numbers to float64
+	if loadedMetadata["count"].(float64) != 42 {
+		t.Errorf("expected count 42, got %v", loadedMetadata["count"])
+	}
+}
+
+// TestVectorRoundTrip tests that Store + Load = same vector
+func TestVectorRoundTrip(t *testing.T) {
+	path := "/tmp/test_roundtrip.magpie"
+	defer os.Remove(path)
+
+	nest, err := Open(path, Options{Dimensions: 128})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer nest.Close()
+
+	// Create test vector
+	original := make([]float32, 128)
+	for i := range original {
+		original[i] = float32(i) * 0.01
+	}
+
+	// Store
+	err = nest.Store("test", original)
+	if err != nil {
+		t.Fatalf("failed to store: %v", err)
+	}
+
+	// Load
+	loaded, _, err := nest.loadVector("test")
+	if err != nil {
+		t.Fatalf("failed to load: %v", err)
+	}
+
+	// Compare
+	if len(loaded) != len(original) {
+		t.Fatalf("length mismatch: expected %d, got %d", len(original), len(loaded))
+	}
+
+	for i := range original {
+		if loaded[i] != original[i] {
+			t.Errorf("index %d: expected %.4f, got %.4f", i, original[i], loaded[i])
+		}
+	}
+}
+
+// TestMultiPageVectors tests vectors that span multiple pages (>4KB)
+func TestMultiPageVectors(t *testing.T) {
+	path := "/tmp/test_multipage.magpie"
+	defer os.Remove(path)
+
+	// Create large vector (4096 dimensions * 4 bytes = 16KB, needs multiple pages)
+	dimensions := 4096
+	nest, err := Open(path, Options{Dimensions: dimensions})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer nest.Close()
+
+	// Create large vector
+	largeVector := make([]float32, dimensions)
+	for i := range largeVector {
+		largeVector[i] = float32(i)
+	}
+
+	// Store
+	err = nest.Store("large", largeVector)
+	if err != nil {
+		t.Fatalf("failed to store large vector: %v", err)
+	}
+
+	// Load
+	loaded, _, err := nest.loadVector("large")
+	if err != nil {
+		t.Fatalf("failed to load large vector: %v", err)
+	}
+
+	// Verify
+	if len(loaded) != len(largeVector) {
+		t.Fatalf("length mismatch: expected %d, got %d", len(largeVector), len(loaded))
+	}
+
+	for i := 0; i < dimensions; i++ {
+		if loaded[i] != largeVector[i] {
+			t.Errorf("index %d: expected %.0f, got %.0f", i, largeVector[i], loaded[i])
+		}
+	}
+}
+
+// TestVectorWithMetadata tests vector + metadata persistence together
+func TestVectorWithMetadata(t *testing.T) {
+	path := "/tmp/test_metadata.magpie"
+	defer os.Remove(path)
+
+	nest, err := Open(path, Options{Dimensions: 3})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer nest.Close()
+
+	vector := []float32{1.0, 2.0, 3.0}
+	metadata := map[string]interface{}{
+		"name":        "Test Document",
+		"score":       95.5,
+		"tags":        []string{"important", "test"},
+		"active":      true,
+		"nested_data": map[string]interface{}{"key": "value"},
+	}
+
+	// Store
+	err = nest.Store("doc1", vector, metadata)
+	if err != nil {
+		t.Fatalf("failed to store: %v", err)
+	}
+
+	// Load
+	loadedVec, loadedMeta, err := nest.loadVector("doc1")
+	if err != nil {
+		t.Fatalf("failed to load: %v", err)
+	}
+
+	// Verify vector
+	for i := range vector {
+		if loadedVec[i] != vector[i] {
+			t.Errorf("vector[%d]: expected %.1f, got %.1f", i, vector[i], loadedVec[i])
+		}
+	}
+
+	// Verify metadata
+	if loadedMeta["name"] != "Test Document" {
+		t.Errorf("name mismatch: %v", loadedMeta["name"])
+	}
+
+	if loadedMeta["score"].(float64) != 95.5 {
+		t.Errorf("score mismatch: %v", loadedMeta["score"])
+	}
+
+	if loadedMeta["active"] != true {
+		t.Errorf("active mismatch: %v", loadedMeta["active"])
+	}
+}
+
+// TestVectorPageChaining tests linked pages via NextPage
+func TestVectorPageChaining(t *testing.T) {
+	path := "/tmp/test_chaining.magpie"
+	defer os.Remove(path)
+
+	// Create database with very small dimensions to force page chaining
+	nest, err := Open(path, Options{Dimensions: 1024})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer nest.Close()
+
+	// Store multiple large vectors to force chaining
+	for i := 0; i < 5; i++ {
+		vector := make([]float32, 1024)
+		for j := range vector {
+			vector[j] = float32(i*1000 + j)
+		}
+
+		err := nest.Store(string(rune('A'+i)), vector)
+		if err != nil {
+			t.Fatalf("failed to store vector %d: %v", i, err)
+		}
+	}
+
+	// Verify all vectors can be loaded
+	for i := 0; i < 5; i++ {
+		id := string(rune('A' + i))
+		loaded, _, err := nest.loadVector(id)
+		if err != nil {
+			t.Fatalf("failed to load vector %s: %v", id, err)
+		}
+
+		if len(loaded) != 1024 {
+			t.Errorf("vector %s: expected 1024 dimensions, got %d", id, len(loaded))
+		}
+
+		// Verify first value
+		expected := float32(i * 1000)
+		if loaded[0] != expected {
+			t.Errorf("vector %s: expected first value %.0f, got %.0f", id, expected, loaded[0])
+		}
+	}
+}
+
+// TestVectorDeletion tests marking vectors deleted and skipping on load
+func TestVectorDeletion(t *testing.T) {
+	path := "/tmp/test_deletion.magpie"
+	defer os.Remove(path)
+
+	nest, err := Open(path, Options{Dimensions: 4})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer nest.Close()
+
+	// Store vectors
+	for i := 0; i < 3; i++ {
+		vector := []float32{float32(i), float32(i + 1), float32(i + 2), float32(i + 3)}
+		err := nest.Store(string(rune('A'+i)), vector)
+		if err != nil {
+			t.Fatalf("failed to store vector %d: %v", i, err)
+		}
+	}
+
+	// TODO: Implement deletion when Remove() is complete
+	// For now, test that non-deleted vectors load correctly
+	for i := 0; i < 3; i++ {
+		id := string(rune('A' + i))
+		loaded, _, err := nest.loadVector(id)
+		if err != nil {
+			t.Fatalf("failed to load vector %s: %v", id, err)
+		}
+
+		if len(loaded) != 4 {
+			t.Errorf("vector %s: expected 4 dimensions, got %d", id, len(loaded))
+		}
+	}
+}
+
+// TestMultipleVectorsOnePage tests packing multiple small vectors per page
+func TestMultipleVectorsOnePage(t *testing.T) {
+	path := "/tmp/test_multiple.magpie"
+	defer os.Remove(path)
+
+	nest, err := Open(path, Options{Dimensions: 4})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer nest.Close()
+
+	// Store many small vectors
+	count := 100
+	for i := 0; i < count; i++ {
+		vector := []float32{
+			float32(i) * 0.1,
+			float32(i) * 0.2,
+			float32(i) * 0.3,
+			float32(i) * 0.4,
+		}
+		id := "vec_" + string(rune('0'+i%10)) + string(rune('0'+i/10))
+		err := nest.Store(id, vector)
+		if err != nil {
+			t.Fatalf("failed to store vector %d: %v", i, err)
+		}
+	}
+
+	// Verify all can be loaded
+	for i := 0; i < count; i++ {
+		id := "vec_" + string(rune('0'+i%10)) + string(rune('0'+i/10))
+		loaded, _, err := nest.loadVector(id)
+		if err != nil {
+			t.Fatalf("failed to load vector %s: %v", id, err)
+		}
+
+		expected := float32(i) * 0.1
+		if loaded[0] != expected {
+			t.Errorf("vector %s: expected %.2f, got %.2f", id, expected, loaded[0])
+		}
+	}
+}
+
+// TestVectorIndexing tests that VectorEntry points to correct data
+func TestVectorIndexing(t *testing.T) {
+	path := "/tmp/test_indexing.magpie"
+	defer os.Remove(path)
+
+	nest, err := Open(path, Options{Dimensions: 8})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer nest.Close()
+
+	// Store vectors with distinct patterns
+	vectors := []struct {
+		id     string
+		values []float32
+	}{
+		{"first", []float32{1, 1, 1, 1, 1, 1, 1, 1}},
+		{"second", []float32{2, 2, 2, 2, 2, 2, 2, 2}},
+		{"third", []float32{3, 3, 3, 3, 3, 3, 3, 3}},
+	}
+
+	for _, v := range vectors {
+		err := nest.Store(v.id, v.values)
+		if err != nil {
+			t.Fatalf("failed to store %s: %v", v.id, err)
+		}
+	}
+
+	// Verify each vector loads with correct data
+	for _, v := range vectors {
+		loaded, _, err := nest.loadVector(v.id)
+		if err != nil {
+			t.Fatalf("failed to load %s: %v", v.id, err)
+		}
+
+		for i := range v.values {
+			if loaded[i] != v.values[i] {
+				t.Errorf("%s[%d]: expected %.0f, got %.0f", v.id, i, v.values[i], loaded[i])
+			}
+		}
+	}
+}
+
+// TestVectorPageFull tests handling full pages and allocating new ones
+func TestVectorPageFull(t *testing.T) {
+	path := "/tmp/test_page_full.magpie"
+	defer os.Remove(path)
+
+	// Use larger dimensions to fill pages faster
+	dimensions := 256
+	nest, err := Open(path, Options{Dimensions: dimensions})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer nest.Close()
+
+	// Calculate approximate vectors per page
+	// Each entry: 80 bytes (VectorEntry) + dimensions * 4 (vector data)
+	entrySize := 80 + dimensions*4
+	vectorsPerPage := (PageSize - 64) / entrySize
+
+	// Store enough vectors to require multiple pages
+	count := vectorsPerPage * 3
+	for i := 0; i < count; i++ {
+		vector := make([]float32, dimensions)
+		for j := range vector {
+			vector[j] = float32(i*dimensions + j)
+		}
+
+		id := "vec_" + string(rune('A'+i%26)) + string(rune('0'+i/26))
+		err := nest.Store(id, vector)
+		if err != nil {
+			t.Fatalf("failed to store vector %d: %v", i, err)
+		}
+	}
+
+	// Verify multiple pages were allocated
+	uniquePages := make(map[uint64]bool)
+	for _, pageNum := range nest.vectorPages {
+		uniquePages[pageNum] = true
+	}
+
+	if len(uniquePages) < 2 {
+		t.Errorf("expected at least 2 pages, got %d", len(uniquePages))
+	}
+
+	// Verify all vectors can still be loaded
+	for i := 0; i < count; i++ {
+		id := "vec_" + string(rune('A'+i%26)) + string(rune('0'+i/26))
+		loaded, _, err := nest.loadVector(id)
+		if err != nil {
+			t.Fatalf("failed to load vector %s: %v", id, err)
+		}
+
+		if len(loaded) != dimensions {
+			t.Errorf("vector %s: expected %d dimensions, got %d", id, dimensions, len(loaded))
+		}
+	}
+}
+
+// TestVectorPersistenceAcrossRestart tests that vectors survive database restart
+func TestVectorPersistenceAcrossRestart(t *testing.T) {
+	path := "/tmp/test_restart.magpie"
+	defer os.Remove(path)
+
+	// First session: store vectors
+	{
+		nest, err := Open(path, Options{Dimensions: 16})
+		if err != nil {
+			t.Fatalf("failed to open database: %v", err)
+		}
+
+		for i := 0; i < 50; i++ {
+			vector := make([]float32, 16)
+			for j := range vector {
+				vector[j] = float32(i*100 + j)
+			}
+
+			metadata := map[string]interface{}{
+				"index": i,
+				"label": "vector_" + string(rune('0'+i%10)),
+			}
+
+			id := "persist_" + string(rune('A'+i%26)) + string(rune('0'+i/26))
+			err := nest.Store(id, vector, metadata)
+			if err != nil {
+				t.Fatalf("failed to store vector %d: %v", i, err)
+			}
+		}
+
+		nest.Close()
+	}
+
+	// Second session: load vectors
+	{
+		nest, err := Open(path, Options{Dimensions: 16})
+		if err != nil {
+			t.Fatalf("failed to reopen database: %v", err)
+		}
+		defer nest.Close()
+
+		// Verify all vectors load correctly
+		for i := 0; i < 50; i++ {
+			id := "persist_" + string(rune('A'+i%26)) + string(rune('0'+i/26))
+			loaded, metadata, err := nest.loadVector(id)
+			if err != nil {
+				t.Fatalf("failed to load vector %s: %v", id, err)
+			}
+
+			// Verify vector data
+			if len(loaded) != 16 {
+				t.Errorf("vector %s: expected 16 dimensions, got %d", id, len(loaded))
+			}
+
+			expected := float32(i * 100)
+			if loaded[0] != expected {
+				t.Errorf("vector %s: expected first value %.0f, got %.0f", id, expected, loaded[0])
+			}
+
+			// Verify metadata
+			if metadata != nil {
+				if metadata["index"].(float64) != float64(i) {
+					t.Errorf("vector %s: metadata index mismatch", id)
+				}
+			}
+		}
+
+		// Verify count
+		if nest.Count() != 50 {
+			t.Errorf("expected 50 vectors, got %d", nest.Count())
+		}
+	}
+}
+
+// TestLargeMetadataPersistence tests persisting large metadata objects
+func TestLargeMetadataPersistence(t *testing.T) {
+	path := "/tmp/test_large_meta.magpie"
+	defer os.Remove(path)
+
+	nest, err := Open(path, Options{Dimensions: 4})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer nest.Close()
+
+	// Create large metadata
+	largeArray := make([]int, 1000)
+	for i := range largeArray {
+		largeArray[i] = i
+	}
+
+	metadata := map[string]interface{}{
+		"title":       "Document with Large Metadata",
+		"description": "This is a very long description that contains a lot of text to test large metadata handling",
+		"numbers":     largeArray,
+		"nested": map[string]interface{}{
+			"level1": map[string]interface{}{
+				"level2": map[string]interface{}{
+					"level3": "deep value",
+				},
+			},
+		},
+	}
+
+	vector := []float32{1.0, 2.0, 3.0, 4.0}
+	err = nest.Store("large_meta", vector, metadata)
+	if err != nil {
+		t.Fatalf("failed to store: %v", err)
+	}
+
+	// Load and verify
+	_, loadedMeta, err := nest.loadVector("large_meta")
+	if err != nil {
+		t.Fatalf("failed to load: %v", err)
+	}
+
+	if loadedMeta["title"] != "Document with Large Metadata" {
+		t.Error("title mismatch")
+	}
+
+	// Verify array was preserved (JSON numbers become float64)
+	loadedArray := loadedMeta["numbers"].([]interface{})
+	if len(loadedArray) != 1000 {
+		t.Errorf("expected 1000 numbers, got %d", len(loadedArray))
+	}
+}
+
+// TestEmptyMetadata tests storing vectors without metadata
+func TestEmptyMetadata(t *testing.T) {
+	path := "/tmp/test_empty_meta.magpie"
+	defer os.Remove(path)
+
+	nest, err := Open(path, Options{Dimensions: 3})
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer nest.Close()
+
+	vector := []float32{1.0, 2.0, 3.0}
+	err = nest.Store("no_meta", vector)
+	if err != nil {
+		t.Fatalf("failed to store: %v", err)
+	}
+
+	loaded, metadata, err := nest.loadVector("no_meta")
+	if err != nil {
+		t.Fatalf("failed to load: %v", err)
+	}
+
+	if len(loaded) != 3 {
+		t.Errorf("expected 3 dimensions, got %d", len(loaded))
+	}
+
+	if metadata != nil && len(metadata) > 0 {
+		t.Errorf("expected nil or empty metadata, got %v", metadata)
+	}
+}
+
+// Helper function to compare metadata (handles JSON number conversion)
+func compareMetadata(t *testing.T, expected, actual map[string]interface{}) {
+	for key, expVal := range expected {
+		actVal, exists := actual[key]
+		if !exists {
+			t.Errorf("missing key %s in actual metadata", key)
+			continue
+		}
+
+		// Convert both to JSON and back for comparison
+		expJSON, _ := json.Marshal(expVal)
+		actJSON, _ := json.Marshal(actVal)
+
+		if string(expJSON) != string(actJSON) {
+			t.Errorf("metadata key %s: expected %s, got %s", key, expJSON, actJSON)
+		}
+	}
+}

@@ -1,0 +1,173 @@
+# GoReleaser configuration for MagpieDB
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: magpie
+    main: ./cmd/magpie
+    binary: magpie
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    ignore:
+      - goos: windows
+        goarch: arm64
+      - goos: windows
+        goarch: arm
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: magpie
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+      - docs/*
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - 'typo'
+
+release:
+  github:
+    owner: voidlab
+    name: magpiedb
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
+  header: |
+    ## MagpieDB {{.Version}}
+
+    **Release Date**: {{.Date}}
+
+    ### Highlights
+
+    <!-- Add release highlights here -->
+
+  footer: |
+    ## Installation
+
+    ### Binary
+    Download the appropriate binary for your platform from the assets below.
+
+    ### Go Install
+    ```bash
+    go install github.com/voidlab/magpiedb/cmd/magpie@{{.Tag}}
+    ```
+
+    ### Docker
+    ```bash
+    docker pull voidlab/magpie:{{.Tag}}
+    ```
+
+    ## Full Changelog
+    https://github.com/voidlab/magpiedb/compare/{{.PreviousTag}}...{{.Tag}}
+
+brews:
+  - repository:
+      owner: voidlab
+      name: homebrew-tap
+    folder: Formula
+    homepage: https://github.com/voidlab/magpiedb
+    description: "The SQLite of Vector Databases"
+    license: MIT
+    test: |
+      system "#{bin}/magpie version"
+    install: |
+      bin.install "magpie"
+
+dockers:
+  - image_templates:
+      - "voidlab/magpie:latest"
+      - "voidlab/magpie:{{ .Version }}"
+      - "voidlab/magpie:v{{ .Major }}"
+      - "voidlab/magpie:v{{ .Major }}.{{ .Minor }}"
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--platform=linux/amd64"
+
+nfpms:
+  - id: magpie
+    package_name: magpie
+    homepage: https://github.com/voidlab/magpiedb
+    maintainer: VoidLab Engineering <engineering@voidlab.dev>
+    description: "The SQLite of Vector Databases"
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin
+    section: database
+    priority: optional
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/magpie/LICENSE
+      - src: README.md
+        dst: /usr/share/doc/magpie/README.md
+
+snapcrafts:
+  - name: magpie
+    summary: "The SQLite of Vector Databases"
+    description: |
+      MagpieDB is an embedded vector database for Go applications.
+      Fast, local vector storage and similarity search with zero dependencies.
+    grade: stable
+    confinement: classic
+    license: MIT
+    apps:
+      magpie:
+        command: magpie
+
+announce:
+  skip: "{{gt .Patch 0}}"
+  discord:
+    enabled: false
+  twitter:
+    enabled: false
