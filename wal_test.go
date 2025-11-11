@@ -291,8 +291,8 @@ func TestWALCorruption(t *testing.T) {
 	// Seek to middle of file and corrupt a byte
 	stat, _ := file.Stat()
 	if stat.Size() > 20 {
-		file.Seek(20, 0)
-		file.Write([]byte{0xFF})
+		_, _ = file.Seek(20, 0)
+		_, _ = file.Write([]byte{0xFF})
 	}
 	file.Close()
 
@@ -737,7 +737,7 @@ func TestWALEmptyMetadata(t *testing.T) {
 		t.Fatalf("Expected 1 entry, got %d", len(entries))
 	}
 
-	if entries[0].Metadata != nil && len(entries[0].Metadata) != 0 {
+	if len(entries[0].Metadata) != 0 {
 		t.Errorf("Expected nil or empty metadata, got %v", entries[0].Metadata)
 	}
 }

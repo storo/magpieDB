@@ -30,7 +30,7 @@ const (
 type Nest struct {
 	path             string              // Path to the database file
 	file             *os.File            // Database file handle
-	mmap             []byte              // Memory-mapped file
+	// mmap             []byte              // Memory-mapped file (unused)
 	header           *Header             // Database header
 	index            *HSNWIndex          // HNSW index for similarity search
 	storage          *Storage            // Storage engine

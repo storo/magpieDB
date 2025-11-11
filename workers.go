@@ -339,7 +339,7 @@ func (pt *PeriodicTask) Start() {
 			select {
 			case <-ticker.C:
 				// Submit task to pool
-				pt.pool.SubmitTask(pt.task)
+				_ = pt.pool.SubmitTask(pt.task)
 			case <-pt.ctx.Done():
 				return
 			}

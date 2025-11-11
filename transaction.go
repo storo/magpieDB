@@ -209,8 +209,8 @@ func (tx *Tx) Commit() error {
 			if err := tx.nest.index.Add(op.ID, op.Vector); err != nil {
 				// If already exists, update instead
 				if err.Error() == fmt.Sprintf("vector with ID %s already exists", op.ID) {
-					tx.nest.index.Remove(op.ID)
-					tx.nest.index.Add(op.ID, op.Vector)
+					_ = tx.nest.index.Remove(op.ID)
+					_ = tx.nest.index.Add(op.ID, op.Vector)
 				} else {
 					return fmt.Errorf("failed to add vector: %w", err)
 				}
@@ -262,19 +262,19 @@ func (tx *Tx) commitMVCC() error {
 
 	// Phase 1: Validate (detect conflicts)
 	if err := tx.tm.mvcc.ValidateTransaction(tx.mvccTx); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 
 	// Phase 2: Write to WAL
 	if err := tx.writeWALMVCC(); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 
 	// Phase 3: Make versions visible in MVCC
 	if err := tx.makeVisibleMVCC(); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 
@@ -382,7 +382,7 @@ func (tx *Tx) updateIndexMVCC() error {
 
 			if exists {
 				// Update: remove old version and add new
-				tx.nest.index.Remove(id)
+				_ = tx.nest.index.Remove(id)
 				if err := tx.nest.index.Add(id, version.Vector); err != nil {
 					return fmt.Errorf("failed to update index: %w", err)
 				}
@@ -494,7 +494,7 @@ func (n *Nest) Batch(f func(*Tx) error) error {
 	}
 
 	if err := f(tx); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 

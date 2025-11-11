@@ -122,7 +122,7 @@ func TestWALRecovery(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("initial%03d", i)
 		vector := randomVector(dimensions)
-		nest.Store(id, vector)
+		_ = nest.Store(id, vector)
 	}
 
 	nest.Close()
@@ -140,7 +140,7 @@ func TestWALRecovery(t *testing.T) {
 		id := fmt.Sprintf("crash%03d", i)
 		vector := randomVector(dimensions)
 		crashVectors[id] = vector
-		nest.Store(id, vector)
+		_ = nest.Store(id, vector)
 	}
 
 	// Flush WAL to ensure entries are written
@@ -206,7 +206,7 @@ func TestSearchConsistency(t *testing.T) {
 	for i := 0; i < vectorCount; i++ {
 		id := fmt.Sprintf("search%03d", i)
 		vector := randomVector(dimensions)
-		nest.Store(id, vector)
+		_ = nest.Store(id, vector)
 	}
 
 	// Perform search and record results
@@ -286,7 +286,7 @@ func TestMultipleRestarts(t *testing.T) {
 		for i := 0; i < vectorsPerCycle; i++ {
 			id := fmt.Sprintf("cycle%d_vec%03d", cycle, i)
 			vector := randomVector(dimensions)
-			nest.Store(id, vector)
+			_ = nest.Store(id, vector)
 		}
 
 		expectedCount := int64((cycle + 1) * vectorsPerCycle)

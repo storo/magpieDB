@@ -5,8 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 
 	"github.com/voidlab/magpiedb"
 )
@@ -54,7 +52,10 @@ func createCmd() {
 	m := fs.Int("m", 16, "HNSW M parameter")
 	ef := fs.Int("ef", 200, "HNSW EfConstruction parameter")
 
-	fs.Parse(os.Args[2:])
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	if fs.NArg() < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: magpie create <database> [options]\n")
@@ -91,7 +92,10 @@ func insertCmd() {
 	vectorStr := fs.String("vector", "", "Vector as JSON array (required)")
 	metaStr := fs.String("meta", "", "Metadata as JSON object")
 
-	fs.Parse(os.Args[2:])
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	if fs.NArg() < 1 || *id == "" || *vectorStr == "" {
 		fmt.Fprintf(os.Stderr, "Usage: magpie insert <database> --id <id> --vector <json> [--meta <json>]\n")
@@ -146,7 +150,10 @@ func searchCmd() {
 	k := fs.Int("k", 10, "Number of results")
 	filterStr := fs.String("filter", "", "Filter as JSON (e.g., {\"key\":\"value\"})")
 
-	fs.Parse(os.Args[2:])
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	if fs.NArg() < 1 || *queryStr == "" {
 		fmt.Fprintf(os.Stderr, "Usage: magpie search <database> --query <json> [--k <num>] [--filter <json>]\n")
@@ -208,7 +215,10 @@ func searchCmd() {
 
 func getCmd() {
 	fs := flag.NewFlagSet("get", flag.ExitOnError)
-	fs.Parse(os.Args[2:])
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	if fs.NArg() < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: magpie get <database> <id>\n")
@@ -241,7 +251,10 @@ func getCmd() {
 
 func removeCmd() {
 	fs := flag.NewFlagSet("remove", flag.ExitOnError)
-	fs.Parse(os.Args[2:])
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	if fs.NArg() < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: magpie remove <database> <id>\n")
@@ -268,7 +281,10 @@ func removeCmd() {
 
 func infoCmd() {
 	fs := flag.NewFlagSet("info", flag.ExitOnError)
-	fs.Parse(os.Args[2:])
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	if fs.NArg() < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: magpie info <database>\n")
@@ -302,7 +318,10 @@ func infoCmd() {
 
 func compactCmd() {
 	fs := flag.NewFlagSet("compact", flag.ExitOnError)
-	fs.Parse(os.Args[2:])
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		os.Exit(1)
+	}
 
 	if fs.NArg() < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: magpie compact <database>\n")
@@ -379,25 +398,4 @@ func formatBytes(bytes int64) string {
 	}
 
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
-func parseVector(s string) ([]float32, error) {
-	// Remove brackets and whitespace
-	s = strings.TrimSpace(s)
-	s = strings.Trim(s, "[]")
-
-	// Split by comma
-	parts := strings.Split(s, ",")
-	vector := make([]float32, len(parts))
-
-	for i, part := range parts {
-		part = strings.TrimSpace(part)
-		val, err := strconv.ParseFloat(part, 32)
-		if err != nil {
-			return nil, fmt.Errorf("invalid number: %s", part)
-		}
-		vector[i] = float32(val)
-	}
-
-	return vector, nil
 }

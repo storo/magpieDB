@@ -387,7 +387,7 @@ func (n *Nest) applyWALEntry(entry *WALEntry) error {
 
 	case WALUpdate:
 		// Remove old version
-		n.index.Remove(entry.ID)
+		_ = n.index.Remove(entry.ID)
 
 		// Add new version
 		if err := n.index.Add(entry.ID, entry.Vector); err != nil {
@@ -407,51 +407,51 @@ func (n *Nest) applyWALEntry(entry *WALEntry) error {
 }
 
 // checkpoint creates a checkpoint by flushing all in-memory state to disk.
-func (n *Nest) checkpoint() error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	// 1. Flush WAL
-	if n.wal != nil {
-		if err := n.wal.Flush(); err != nil {
-			return fmt.Errorf("failed to flush WAL: %w", err)
-		}
-	}
-
-	// 2. Write all vectors to pages
-	// TODO: Implement vector page writing
-
-	// 3. Serialize and write index
-	// TODO: Implement index serialization
-
-	// 4. Update and write header
-	if err := n.writeHeader(); err != nil {
-		return fmt.Errorf("failed to write header: %w", err)
-	}
-
-	// 5. Sync storage
-	if n.storage != nil {
-		if err := n.storage.Sync(); err != nil {
-			return fmt.Errorf("failed to sync storage: %w", err)
-		}
-	}
-
-	// 6. Truncate WAL
-	if n.wal != nil {
-		if err := n.wal.Truncate(); err != nil {
-			return fmt.Errorf("failed to truncate WAL: %w", err)
-		}
-	}
-
-	return nil
-}
+// func (n *Nest) checkpoint() error {
+// 	n.mu.Lock()
+// 	defer n.mu.Unlock()
+//
+// 	// 1. Flush WAL
+// 	if n.wal != nil {
+// 		if err := n.wal.Flush(); err != nil {
+// 			return fmt.Errorf("failed to flush WAL: %w", err)
+// 		}
+// 	}
+//
+// 	// 2. Write all vectors to pages
+// 	// TODO: Implement vector page writing
+//
+// 	// 3. Serialize and write index
+// 	// TODO: Implement index serialization
+//
+// 	// 4. Update and write header
+// 	if err := n.writeHeader(); err != nil {
+// 		return fmt.Errorf("failed to write header: %w", err)
+// 	}
+//
+// 	// 5. Sync storage
+// 	if n.storage != nil {
+// 		if err := n.storage.Sync(); err != nil {
+// 			return fmt.Errorf("failed to sync storage: %w", err)
+// 		}
+// 	}
+//
+// 	// 6. Truncate WAL
+// 	if n.wal != nil {
+// 		if err := n.wal.Truncate(); err != nil {
+// 			return fmt.Errorf("failed to truncate WAL: %w", err)
+// 		}
+// 	}
+//
+// 	return nil
+// }
 
 // validateDatabase performs integrity checks on the database.
-func (n *Nest) validateDatabase() error {
-	// TODO: Verify header checksum
-	// TODO: Verify page checksums
-	// TODO: Check for orphaned pages
-	// TODO: Verify index consistency
-
-	return nil
-}
+// func (n *Nest) validateDatabase() error {
+// 	// TODO: Verify header checksum
+// 	// TODO: Verify page checksums
+// 	// TODO: Check for orphaned pages
+// 	// TODO: Verify index consistency
+//
+// 	return nil
+// }

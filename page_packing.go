@@ -196,28 +196,28 @@ func UnpackVectorsFromPage(pageData []byte) ([]VectorData, error) {
 // These are already defined in page.go but we ensure they work correctly
 
 // Validation helper
-func validatePackedPage(page *PackedVectorPage) error {
-	if page.VectorCount == 0 {
-		return fmt.Errorf("page has no vectors")
-	}
-
-	if len(page.Entries) != int(page.VectorCount) {
-		return fmt.Errorf("entry count mismatch: %d vs %d", len(page.Entries), page.VectorCount)
-	}
-
-	if len(page.VectorData) != int(page.VectorCount) {
-		return fmt.Errorf("vector data count mismatch: %d vs %d", len(page.VectorData), page.VectorCount)
-	}
-
-	// Verify all vectors have same dimension
-	if len(page.VectorData) > 0 {
-		expectedDim := len(page.VectorData[0])
-		for i, vec := range page.VectorData {
-			if len(vec) != expectedDim {
-				return fmt.Errorf("vector %d has dimension %d, expected %d", i, len(vec), expectedDim)
-			}
-		}
-	}
-
-	return nil
-}
+// func validatePackedPage(page *PackedVectorPage) error {
+// 	if page.VectorCount == 0 {
+// 		return fmt.Errorf("page has no vectors")
+// 	}
+//
+// 	if len(page.Entries) != int(page.VectorCount) {
+// 		return fmt.Errorf("entry count mismatch: %d vs %d", len(page.Entries), page.VectorCount)
+// 	}
+//
+// 	if len(page.VectorData) != int(page.VectorCount) {
+// 		return fmt.Errorf("vector data count mismatch: %d vs %d", len(page.VectorData), page.VectorCount)
+// 	}
+//
+// 	// Verify all vectors have same dimension
+// 	if len(page.VectorData) > 0 {
+// 		expectedDim := len(page.VectorData[0])
+// 		for i, vec := range page.VectorData {
+// 			if len(vec) != expectedDim {
+// 				return fmt.Errorf("vector %d has dimension %d, expected %d", i, len(vec), expectedDim)
+// 			}
+// 		}
+// 	}
+//
+// 	return nil
+// }

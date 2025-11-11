@@ -98,7 +98,7 @@ func TestMVCCConcurrentReadersWriter(t *testing.T) {
 		treasure, err := tx.Get("vec1")
 		if err != nil {
 			errors <- fmt.Errorf("reader: first read failed: %w", err)
-			tx.Rollback()
+			_ = tx.Rollback()
 			return
 		}
 		initialValue := treasure.Vector[0]
@@ -110,7 +110,7 @@ func TestMVCCConcurrentReadersWriter(t *testing.T) {
 		treasure, err = tx.Get("vec1")
 		if err != nil {
 			errors <- fmt.Errorf("reader: second read failed: %w", err)
-			tx.Rollback()
+			_ = tx.Rollback()
 			return
 		}
 
@@ -119,7 +119,7 @@ func TestMVCCConcurrentReadersWriter(t *testing.T) {
 				initialValue, treasure.Vector[0])
 		}
 
-		tx.Commit()
+		_ = tx.Commit()
 	}()
 
 	// Concurrent writer
@@ -314,8 +314,8 @@ func TestMVCCRecoveryWithMultipleVersions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tx.Store("vec1", []float32{float32(i), float32(i)})
-			tx.Commit()
+			_ = tx.Store("vec1", []float32{float32(i), float32(i)})
+			_ = tx.Commit()
 		}
 
 		nest.Close()
@@ -352,7 +352,7 @@ func TestMVCCLongRunningSnapshot(t *testing.T) {
 	defer nest.Close()
 
 	// Initial value
-	nest.Store("vec1", []float32{0, 0})
+	_ = nest.Store("vec1", []float32{0, 0})
 
 	// Start long-running transaction
 	longTx, err := nest.Begin()
@@ -368,8 +368,8 @@ func TestMVCCLongRunningSnapshot(t *testing.T) {
 	// Create 10 new versions
 	for i := 1; i <= 10; i++ {
 		tx, _ := nest.Begin()
-		tx.Store("vec1", []float32{float32(i), float32(i)})
-		tx.Commit()
+		_ = tx.Store("vec1", []float32{float32(i), float32(i)})
+		_ = tx.Commit()
 	}
 
 	// Long transaction should still see original value
@@ -383,7 +383,7 @@ func TestMVCCLongRunningSnapshot(t *testing.T) {
 			initialTreasure.Vector[0], currentTreasure.Vector[0])
 	}
 
-	longTx.Commit()
+	_ = longTx.Commit()
 
 	// After long tx commits, latest should be visible
 	treasure, _ := nest.Get("vec1")
@@ -405,15 +405,15 @@ func TestMVCCIndexConsistency(t *testing.T) {
 
 	// Insert vectors
 	tx1, _ := nest.Begin()
-	tx1.Store("vec1", []float32{1, 0, 0})
-	tx1.Store("vec2", []float32{0, 1, 0})
-	tx1.Store("vec3", []float32{0, 0, 1})
-	tx1.Commit()
+	_ = tx1.Store("vec1", []float32{1, 0, 0})
+	_ = tx1.Store("vec2", []float32{0, 1, 0})
+	_ = tx1.Store("vec3", []float32{0, 0, 1})
+	_ = tx1.Commit()
 
 	// Update vec2
 	tx2, _ := nest.Begin()
-	tx2.Store("vec2", []float32{0.5, 0.5, 0})
-	tx2.Commit()
+	_ = tx2.Store("vec2", []float32{0.5, 0.5, 0})
+	_ = tx2.Commit()
 
 	// Search should return consistent results
 	results := nest.Find([]float32{0, 1, 0}, 3)
@@ -446,7 +446,7 @@ func TestMVCCSearchWithConcurrentWrites(t *testing.T) {
 	// Initial vectors
 	for i := 0; i < 10; i++ {
 		id := fmt.Sprintf("vec%d", i)
-		nest.Store(id, []float32{float32(i), 0, 0})
+		_ = nest.Store(id, []float32{float32(i), 0, 0})
 	}
 
 	var wg sync.WaitGroup
@@ -470,15 +470,15 @@ func TestMVCCSearchWithConcurrentWrites(t *testing.T) {
 			t.Errorf("Search results changed: %d -> %d", count1, count2)
 		}
 
-		tx.Commit()
+		_ = tx.Commit()
 	}()
 
 	// Concurrent writer
 	time.Sleep(50 * time.Millisecond)
 	tx, _ := nest.Begin()
-	tx.Store("vec10", []float32{10, 0, 0})
-	tx.Store("vec11", []float32{11, 0, 0})
-	tx.Commit()
+	_ = tx.Store("vec10", []float32{10, 0, 0})
+	_ = tx.Store("vec11", []float32{11, 0, 0})
+	_ = tx.Commit()
 
 	wg.Wait()
 }
@@ -494,12 +494,12 @@ func TestMVCCRollbackIsolation(t *testing.T) {
 	}
 	defer nest.Close()
 
-	nest.Store("vec1", []float32{1, 1})
+	_ = nest.Store("vec1", []float32{1, 1})
 
 	// Start transaction and modify
 	tx, _ := nest.Begin()
-	tx.Store("vec1", []float32{999, 999})
-	tx.Store("vec2", []float32{2, 2})
+	_ = tx.Store("vec1", []float32{999, 999})
+	_ = tx.Store("vec2", []float32{2, 2})
 
 	// Rollback
 	if err := tx.Rollback(); err != nil {
@@ -528,11 +528,11 @@ func TestMVCCMetadataPersistence(t *testing.T) {
 	}
 
 	tx, _ := nest.Begin()
-	tx.Store("vec1", []float32{1, 2}, map[string]interface{}{
+	_ = tx.Store("vec1", []float32{1, 2}, map[string]interface{}{
 		"title": "Test Vector",
 		"count": 42,
 	})
-	tx.Commit()
+	_ = tx.Commit()
 
 	nest.Close()
 
@@ -566,18 +566,18 @@ func TestMVCCDeleteAndRecreate(t *testing.T) {
 
 	// Create
 	tx1, _ := nest.Begin()
-	tx1.Store("vec1", []float32{1, 1})
-	tx1.Commit()
+	_ = tx1.Store("vec1", []float32{1, 1})
+	_ = tx1.Commit()
 
 	// Delete
 	tx2, _ := nest.Begin()
-	tx2.Remove("vec1")
-	tx2.Commit()
+	_ = tx2.Remove("vec1")
+	_ = tx2.Commit()
 
 	// Recreate
 	tx3, _ := nest.Begin()
-	tx3.Store("vec1", []float32{2, 2})
-	tx3.Commit()
+	_ = tx3.Store("vec1", []float32{2, 2})
+	_ = tx3.Commit()
 
 	// Verify new value
 	treasure, err := nest.Get("vec1")
@@ -603,7 +603,7 @@ func TestMVCCMultipleReadersNoBlocking(t *testing.T) {
 
 	// Setup data
 	for i := 0; i < 5; i++ {
-		nest.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), 0, 0})
+		_ = nest.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), 0, 0})
 	}
 
 	var wg sync.WaitGroup
@@ -618,10 +618,10 @@ func TestMVCCMultipleReadersNoBlocking(t *testing.T) {
 			defer wg.Done()
 
 			tx, _ := nest.Begin()
-			defer tx.Commit()
+			defer func() { _ = tx.Commit() }()
 
 			for j := 0; j < 5; j++ {
-				tx.Get(fmt.Sprintf("vec%d", j))
+				_, _ = tx.Get(fmt.Sprintf("vec%d", j))
 			}
 		}(i)
 	}
@@ -649,8 +649,8 @@ func TestMVCCAbortedTransactionCleanup(t *testing.T) {
 	// Create and abort several transactions
 	for i := 0; i < 10; i++ {
 		tx, _ := nest.Begin()
-		tx.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), float32(i)})
-		tx.Rollback()
+		_ = tx.Store(fmt.Sprintf("vec%d", i), []float32{float32(i), float32(i)})
+		_ = tx.Rollback()
 	}
 
 	// Database should be empty
@@ -660,8 +660,8 @@ func TestMVCCAbortedTransactionCleanup(t *testing.T) {
 
 	// Now commit one successfully
 	tx, _ := nest.Begin()
-	tx.Store("vec_committed", []float32{1, 1})
-	tx.Commit()
+	_ = tx.Store("vec_committed", []float32{1, 1})
+	_ = tx.Commit()
 
 	if nest.Count() != 1 {
 		t.Errorf("Expected 1 vector, got %d", nest.Count())

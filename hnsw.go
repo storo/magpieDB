@@ -2,7 +2,6 @@ package magpie
 
 import (
 	"container/heap"
-	"math/rand"
 )
 
 // HNSW algorithm implementation
@@ -267,10 +266,10 @@ func (h MaxHeap) ToSlice() []*SearchResult {
 }
 
 // randLevel generates a random level for a new node.
-func randLevel(maxLevel int) int {
-	level := 0
-	for level < maxLevel && rand.Float64() < 0.5 {
-		level++
-	}
-	return level
-}
+// func randLevel(maxLevel int) int {
+// 	level := 0
+// 	for level < maxLevel && rand.Float64() < 0.5 {
+// 		level++
+// 	}
+// 	return level
+// }

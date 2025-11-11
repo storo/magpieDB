@@ -200,7 +200,7 @@ func TestBatchErrorHandling(t *testing.T) {
 
 	err := nest.Batch(func(tx *Tx) error {
 		// Add some operations
-		tx.Store("test1", make([]float32, 128))
+		_ = tx.Store("test1", make([]float32, 128))
 		return expectedErr
 	})
 
@@ -388,7 +388,7 @@ func TestBatchIsolation(t *testing.T) {
 	// Pre-populate with some vectors
 	for i := 0; i < 10; i++ {
 		id := fmt.Sprintf("vec%d", i)
-		nest.Store(id, make([]float32, 128))
+		_ = nest.Store(id, make([]float32, 128))
 	}
 
 	var wg sync.WaitGroup
@@ -633,7 +633,7 @@ func TestBatchRemoveOperations(t *testing.T) {
 	// Pre-populate
 	for i := 0; i < 100; i++ {
 		id := fmt.Sprintf("vec%d", i)
-		nest.Store(id, make([]float32, 128))
+		_ = nest.Store(id, make([]float32, 128))
 	}
 
 	initialCount := nest.Count()
@@ -669,7 +669,7 @@ func TestBatchMixedOperations(t *testing.T) {
 	// Pre-populate
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("vec%d", i)
-		nest.Store(id, make([]float32, 128))
+		_ = nest.Store(id, make([]float32, 128))
 	}
 
 	err := nest.Batch(func(tx *Tx) error {
@@ -709,7 +709,7 @@ func TestBatchRollbackOnPanic(t *testing.T) {
 	defer cleanupTestNest(nest)
 
 	// Pre-populate
-	nest.Store("vec1", make([]float32, 128))
+	_ = nest.Store("vec1", make([]float32, 128))
 	initialCount := nest.Count()
 
 	// Try batch that panics
@@ -720,8 +720,8 @@ func TestBatchRollbackOnPanic(t *testing.T) {
 			}
 		}()
 
-		nest.Batch(func(tx *Tx) error {
-			tx.Store("vec2", make([]float32, 128))
+		_ = nest.Batch(func(tx *Tx) error {
+			_ = tx.Store("vec2", make([]float32, 128))
 			panic("simulated panic")
 		})
 	}()
@@ -893,10 +893,10 @@ func BenchmarkBatchMemoryOverhead(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		nest.Batch(func(tx *Tx) error {
+		_ = nest.Batch(func(tx *Tx) error {
 			for j := 0; j < 1000; j++ {
 				id := fmt.Sprintf("vec_%d_%d", i, j)
-				tx.Store(id, vector)
+				_ = tx.Store(id, vector)
 			}
 			return nil
 		})
@@ -941,7 +941,7 @@ func TestBatchFind(t *testing.T) {
 		for j := range vector {
 			vector[j] = float32(i) + rand.Float32()
 		}
-		nest.Store(id, vector)
+		_ = nest.Store(id, vector)
 	}
 
 	// Create multiple queries
@@ -983,7 +983,7 @@ func TestBatchFindConcurrency(t *testing.T) {
 		for j := range vector {
 			vector[j] = rand.Float32()
 		}
-		nest.Store(id, vector)
+		_ = nest.Store(id, vector)
 	}
 
 	// Create queries
@@ -1028,7 +1028,7 @@ func BenchmarkBatchFind(b *testing.B) {
 		for j := range vector {
 			vector[j] = rand.Float32()
 		}
-		nest.Store(id, vector)
+		_ = nest.Store(id, vector)
 	}
 
 	// Create queries

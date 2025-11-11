@@ -64,8 +64,8 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 
 	numWorkers := 4
 	pool := NewWorkerPool(nest, numWorkers)
-	pool.Start()
-	defer pool.Stop()
+	_ = pool.Start()
+	defer func() { _ = pool.Stop() }()
 
 	// Submit multiple tasks concurrently
 	numTasks := 20
@@ -84,7 +84,7 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 				return nil
 			},
 		}
-		pool.SubmitTask(task)
+		_ = pool.SubmitTask(task)
 	}
 
 	// Wait for all tasks with timeout
@@ -114,7 +114,7 @@ func TestWorkerPoolContext(t *testing.T) {
 	defer nest.Close()
 
 	pool := NewWorkerPool(nest, 2)
-	pool.Start()
+	_ = pool.Start()
 
 	// Cancel context
 	pool.cancel()
@@ -132,12 +132,15 @@ func TestWorkerPoolContext(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	err := pool.SubmitTask(task)
-	if err == nil {
-		// Some implementations might return error, others might silently ignore
-		// Either is acceptable as long as task doesn't execute
+	if err != nil {
+		// Expected: pool should reject task after shutdown
+		t.Log("Pool correctly rejected task after shutdown")
+	} else {
+		// Acceptable: pool may silently reject tasks after shutdown
+		t.Log("Pool silently rejected task after shutdown")
 	}
 
-	pool.Stop()
+	_ = pool.Stop()
 }
 
 func TestWorkerPoolTaskExecution(t *testing.T) {
@@ -145,8 +148,8 @@ func TestWorkerPoolTaskExecution(t *testing.T) {
 	defer nest.Close()
 
 	pool := NewWorkerPool(nest, 2)
-	pool.Start()
-	defer pool.Stop()
+	_ = pool.Start()
+	defer func() { _ = pool.Stop() }()
 
 	// Submit task and verify it executes
 	executed := false
@@ -162,7 +165,7 @@ func TestWorkerPoolTaskExecution(t *testing.T) {
 		},
 	}
 
-	pool.SubmitTask(task)
+	_ = pool.SubmitTask(task)
 
 	// Wait for execution
 	time.Sleep(100 * time.Millisecond)
@@ -180,8 +183,8 @@ func TestWorkerPoolPriority(t *testing.T) {
 	defer nest.Close()
 
 	pool := NewWorkerPool(nest, 1) // Single worker to test ordering
-	pool.Start()
-	defer pool.Stop()
+	_ = pool.Start()
+	defer func() { _ = pool.Stop() }()
 
 	// Submit tasks with different priorities
 	var order []int
@@ -212,9 +215,9 @@ func TestWorkerPoolPriority(t *testing.T) {
 		},
 	}
 
-	pool.SubmitTask(lowPrioTask)
+	_ = pool.SubmitTask(lowPrioTask)
 	time.Sleep(10 * time.Millisecond) // Let low priority start
-	pool.SubmitTask(highPrioTask)
+	_ = pool.SubmitTask(highPrioTask)
 
 	// Wait for both to complete
 	time.Sleep(200 * time.Millisecond)
@@ -232,8 +235,8 @@ func TestWorkerPoolErrorHandling(t *testing.T) {
 	defer nest.Close()
 
 	pool := NewWorkerPool(nest, 2)
-	pool.Start()
-	defer pool.Stop()
+	_ = pool.Start()
+	defer func() { _ = pool.Stop() }()
 
 	// Submit task that returns error
 	errorTask := &testTask{
@@ -262,7 +265,7 @@ func TestWorkerPoolErrorHandling(t *testing.T) {
 		},
 	}
 
-	pool.SubmitTask(normalTask)
+	_ = pool.SubmitTask(normalTask)
 	time.Sleep(100 * time.Millisecond)
 
 	mu.Lock()
@@ -281,7 +284,7 @@ func TestWorkerPoolNoLeaks(t *testing.T) {
 	before := runtime.NumGoroutine()
 
 	pool := NewWorkerPool(nest, 4)
-	pool.Start()
+	_ = pool.Start()
 
 	// Submit some tasks
 	for i := 0; i < 10; i++ {
@@ -292,11 +295,11 @@ func TestWorkerPoolNoLeaks(t *testing.T) {
 				return nil
 			},
 		}
-		pool.SubmitTask(task)
+		_ = pool.SubmitTask(task)
 	}
 
 	// Stop pool
-	pool.Stop()
+	_ = pool.Stop()
 
 	// Wait for goroutines to exit
 	time.Sleep(100 * time.Millisecond)
@@ -317,8 +320,8 @@ func TestWorkerPoolRestart(t *testing.T) {
 	pool := NewWorkerPool(nest, 2)
 
 	// Start, stop, start again
-	pool.Start()
-	pool.Stop()
+	_ = pool.Start()
+	_ = pool.Stop()
 
 	// Create new pool (restart not supported on same instance)
 	pool = NewWorkerPool(nest, 2)
@@ -341,9 +344,9 @@ func TestWorkerPoolRestart(t *testing.T) {
 		},
 	}
 
-	pool.SubmitTask(task)
+	_ = pool.SubmitTask(task)
 	time.Sleep(100 * time.Millisecond)
-	pool.Stop()
+	_ = pool.Stop()
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -373,7 +376,7 @@ func TestAutoCompactionWorker(t *testing.T) {
 		for j := range vector {
 			vector[j] = float32(i) * 0.1
 		}
-		nest.Store(fmt.Sprintf("vec-%d", i), vector)
+		_ = nest.Store(fmt.Sprintf("vec-%d", i), vector)
 	}
 
 	// Create worker with short interval
@@ -400,12 +403,12 @@ func TestMVCCGCWorker(t *testing.T) {
 
 	// Create some versions
 	tx1, _ := nest.Begin()
-	tx1.Store("doc1", []float32{0.1, 0.2, 0.3})
-	tx1.Commit()
+	_ = tx1.Store("doc1", []float32{0.1, 0.2, 0.3})
+	_ = tx1.Commit()
 
 	tx2, _ := nest.Begin()
-	tx2.Store("doc1", []float32{0.2, 0.3, 0.4})
-	tx2.Commit()
+	_ = tx2.Store("doc1", []float32{0.2, 0.3, 0.4})
+	_ = tx2.Commit()
 
 	// Create worker
 	worker := NewMVCCGCWorker(100 * time.Millisecond)
@@ -427,7 +430,7 @@ func TestIndexOptimizationWorker(t *testing.T) {
 	// Add vectors
 	for i := 0; i < 50; i++ {
 		vector := make([]float32, 128)
-		nest.Store(fmt.Sprintf("vec-%d", i), vector)
+		_ = nest.Store(fmt.Sprintf("vec-%d", i), vector)
 	}
 
 	// Create worker
@@ -445,7 +448,7 @@ func TestMetricsAggregationWorker(t *testing.T) {
 	defer nest.Close()
 
 	// Perform some operations
-	nest.Store("doc1", []float32{0.1, 0.2, 0.3})
+	_ = nest.Store("doc1", []float32{0.1, 0.2, 0.3})
 	nest.Find([]float32{0.1, 0.2, 0.3}, 10)
 
 	// Create worker
@@ -469,8 +472,8 @@ func TestWALCheckpointWorker(t *testing.T) {
 	defer nest.Close()
 
 	// Write some data to WAL
-	nest.Store("doc1", []float32{0.1, 0.2, 0.3})
-	nest.Store("doc2", []float32{0.2, 0.3, 0.4})
+	_ = nest.Store("doc1", []float32{0.1, 0.2, 0.3})
+	_ = nest.Store("doc2", []float32{0.2, 0.3, 0.4})
 
 	// Get WAL size before
 	var sizeBefore int64
@@ -524,7 +527,7 @@ func TestWorkersWithRealDatabase(t *testing.T) {
 	// Perform some operations
 	for i := 0; i < 50; i++ {
 		vector := make([]float32, 128)
-		nest.Store(fmt.Sprintf("doc-%d", i), vector)
+		_ = nest.Store(fmt.Sprintf("doc-%d", i), vector)
 	}
 
 	// Let workers run
@@ -553,7 +556,7 @@ func TestAutoCompactionTriggersOnFragmentation(t *testing.T) {
 	// Add and remove vectors to create fragmentation
 	for i := 0; i < 100; i++ {
 		vector := make([]float32, 128)
-		nest.Store(fmt.Sprintf("doc-%d", i), vector)
+		_ = nest.Store(fmt.Sprintf("doc-%d", i), vector)
 	}
 
 	// Wait for potential compaction
@@ -584,8 +587,8 @@ func TestMVCCGCRemovesOldVersions(t *testing.T) {
 		tx, _ := nest.Begin()
 		vector := make([]float32, 128)
 		vector[0] = float32(i)
-		tx.Store("versioned-doc", vector)
-		tx.Commit()
+		_ = tx.Store("versioned-doc", vector)
+		_ = tx.Commit()
 	}
 
 	// Wait for GC
@@ -617,7 +620,7 @@ func TestIndexOptimizationImprovesTopology(t *testing.T) {
 	// Add vectors
 	for i := 0; i < 100; i++ {
 		vector := make([]float32, 128)
-		nest.Store(fmt.Sprintf("doc-%d", i), vector)
+		_ = nest.Store(fmt.Sprintf("doc-%d", i), vector)
 	}
 
 	// Wait for optimization
@@ -648,7 +651,7 @@ func TestWALCheckpointReducesSize(t *testing.T) {
 	// Write data
 	for i := 0; i < 50; i++ {
 		vector := make([]float32, 128)
-		nest.Store(fmt.Sprintf("doc-%d", i), vector)
+		_ = nest.Store(fmt.Sprintf("doc-%d", i), vector)
 	}
 
 	// Wait for checkpoint
@@ -719,7 +722,7 @@ func TestGracefulShutdownNoDataLoss(t *testing.T) {
 	// Write data
 	for i := 0; i < 100; i++ {
 		vector := make([]float32, 128)
-		nest.Store(fmt.Sprintf("doc-%d", i), vector)
+		_ = nest.Store(fmt.Sprintf("doc-%d", i), vector)
 	}
 
 	// Close immediately (should wait for workers)
@@ -756,8 +759,8 @@ func TestWorkerHighLoad(t *testing.T) {
 	defer nest.Close()
 
 	pool := NewWorkerPool(nest, 8)
-	pool.Start()
-	defer pool.Stop()
+	_ = pool.Start()
+	defer func() { _ = pool.Stop() }()
 
 	// Submit many tasks rapidly
 	numTasks := 1000
@@ -771,7 +774,7 @@ func TestWorkerHighLoad(t *testing.T) {
 				return nil
 			},
 		}
-		pool.SubmitTask(task)
+		_ = pool.SubmitTask(task)
 	}
 
 	// Wait for completion with timeout
@@ -822,7 +825,7 @@ func TestWorkerLongRunning(t *testing.T) {
 				return
 			default:
 				vector := make([]float32, 128)
-				nest.Store(fmt.Sprintf("doc-%d", atomic.AddInt32(&ops, 1)), vector)
+				_ = nest.Store(fmt.Sprintf("doc-%d", atomic.AddInt32(&ops, 1)), vector)
 				time.Sleep(10 * time.Millisecond)
 			}
 		}
@@ -865,7 +868,7 @@ func TestWorkerConcurrentDatabaseOps(t *testing.T) {
 			for j := 0; j < opsPerGoroutine; j++ {
 				vector := make([]float32, 128)
 				docID := fmt.Sprintf("doc-%d-%d", id, j)
-				nest.Store(docID, vector)
+				_ = nest.Store(docID, vector)
 				nest.Has(docID)
 				nest.Find(vector, 10)
 			}
@@ -906,7 +909,7 @@ func TestWorkerMemoryUsage(t *testing.T) {
 	// Run operations
 	for i := 0; i < 1000; i++ {
 		vector := make([]float32, 128)
-		nest.Store(fmt.Sprintf("doc-%d", i), vector)
+		_ = nest.Store(fmt.Sprintf("doc-%d", i), vector)
 	}
 
 	// Let workers run
@@ -1030,7 +1033,7 @@ func TestReindexWorkerExecution(t *testing.T) {
 		for j := range vec {
 			vec[j] = float32(i+j) * 0.01
 		}
-		nest.Store(id, vec)
+		_ = nest.Store(id, vec)
 	}
 
 	worker := NewReindexWorker(1*time.Second, 0.85)
@@ -1060,7 +1063,7 @@ func TestReindexWorkerSkipsGoodIndex(t *testing.T) {
 	// Add vectors (new index is high quality)
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("vec%d", i)
-		nest.Store(id, make([]float32, 128))
+		_ = nest.Store(id, make([]float32, 128))
 	}
 
 	worker := NewReindexWorker(1*time.Second, 0.85)
@@ -1095,7 +1098,7 @@ func TestReindexWorkerWithRealDatabase(t *testing.T) {
 		for j := range vector {
 			vector[j] = float32(i*j) * 0.01
 		}
-		nest.Store(fmt.Sprintf("doc-%d", i), vector)
+		_ = nest.Store(fmt.Sprintf("doc-%d", i), vector)
 	}
 
 	// Degrade and reindex
@@ -1122,7 +1125,7 @@ func TestReindexWorkerConcurrentAccess(t *testing.T) {
 	// Add initial data
 	for i := 0; i < 100; i++ {
 		vec := make([]float32, 128)
-		nest.Store(fmt.Sprintf("vec%d", i), vec)
+		_ = nest.Store(fmt.Sprintf("vec%d", i), vec)
 	}
 
 	degradeIndexQuality(nest)
@@ -1177,7 +1180,7 @@ func TestBackupWorkerCreatesBackup(t *testing.T) {
 
 	backupDir := fmt.Sprintf("/tmp/magpie_backup_test_%d", time.Now().UnixNano())
 	defer os.RemoveAll(backupDir)
-	os.MkdirAll(backupDir, 0755)
+	_ = os.MkdirAll(backupDir, 0755)
 
 	// Add data
 	for i := 0; i < 10; i++ {
@@ -1186,7 +1189,7 @@ func TestBackupWorkerCreatesBackup(t *testing.T) {
 		for j := range vec {
 			vec[j] = float32(i+j) * 0.1
 		}
-		nest.Store(id, vec)
+		_ = nest.Store(id, vec)
 	}
 
 	worker := NewBackupWorker(1*time.Second, backupDir, 3)
@@ -1214,15 +1217,15 @@ func TestBackupWorkerRotation(t *testing.T) {
 
 	backupDir := fmt.Sprintf("/tmp/magpie_backup_rotation_%d", time.Now().UnixNano())
 	defer os.RemoveAll(backupDir)
-	os.MkdirAll(backupDir, 0755)
+	_ = os.MkdirAll(backupDir, 0755)
 
 	// Create worker with max 3 backups
 	worker := NewBackupWorker(1*time.Second, backupDir, 3)
 
 	// Create 5 backups (should rotate to keep only 3)
 	for i := 0; i < 5; i++ {
-		nest.Store(fmt.Sprintf("vec%d", i), make([]float32, 128))
-		worker.Execute(nest)
+		_ = nest.Store(fmt.Sprintf("vec%d", i), make([]float32, 128))
+		_ = worker.Execute(nest)
 		time.Sleep(10 * time.Millisecond) // Ensure different timestamps
 	}
 
@@ -1249,13 +1252,13 @@ func TestBackupWorkerRestore(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		vec := make([]float32, 128)
 		vec[0] = float32(i)
-		nest.Store(fmt.Sprintf("doc%d", i), vec)
+		_ = nest.Store(fmt.Sprintf("doc%d", i), vec)
 	}
 
 	// Create backup
 	backupDir := fmt.Sprintf("/tmp/magpie_backup_restore_%d", time.Now().UnixNano())
 	defer os.RemoveAll(backupDir)
-	os.MkdirAll(backupDir, 0755)
+	_ = os.MkdirAll(backupDir, 0755)
 
 	worker := NewBackupWorker(1*time.Second, backupDir, 3)
 	err = worker.Execute(nest)
@@ -1291,7 +1294,7 @@ func TestBackupWorkerWithConcurrentWrites(t *testing.T) {
 
 	backupDir := fmt.Sprintf("/tmp/magpie_backup_concurrent_%d", time.Now().UnixNano())
 	defer os.RemoveAll(backupDir)
-	os.MkdirAll(backupDir, 0755)
+	_ = os.MkdirAll(backupDir, 0755)
 
 	// Start concurrent writes
 	var wg sync.WaitGroup
@@ -1300,7 +1303,7 @@ func TestBackupWorkerWithConcurrentWrites(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 50; i++ {
 			vec := make([]float32, 128)
-			nest.Store(fmt.Sprintf("concurrent%d", i), vec)
+			_ = nest.Store(fmt.Sprintf("concurrent%d", i), vec)
 			time.Sleep(5 * time.Millisecond)
 		}
 	}()
@@ -1352,7 +1355,7 @@ func TestStatisticsWorkerCollectsStats(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		vec := make([]float32, 128)
 		vec[0] = float32(i)
-		nest.Store(fmt.Sprintf("vec%d", i), vec)
+		_ = nest.Store(fmt.Sprintf("vec%d", i), vec)
 	}
 
 	// Perform some searches
@@ -1395,7 +1398,7 @@ func TestStatisticsWorkerExportsJSON(t *testing.T) {
 
 	// Add some data
 	for i := 0; i < 10; i++ {
-		nest.Store(fmt.Sprintf("doc%d", i), make([]float32, 128))
+		_ = nest.Store(fmt.Sprintf("doc%d", i), make([]float32, 128))
 	}
 
 	worker := NewStatisticsWorker(1*time.Second, statsPath)
@@ -1431,16 +1434,16 @@ func TestStatisticsWorkerMetricsAccuracy(t *testing.T) {
 	// Add known amount of data
 	vectorCount := 75
 	for i := 0; i < vectorCount; i++ {
-		nest.Store(fmt.Sprintf("vec%d", i), make([]float32, 128))
+		_ = nest.Store(fmt.Sprintf("vec%d", i), make([]float32, 128))
 	}
 
 	worker := NewStatisticsWorker(1*time.Second, statsPath)
-	worker.Execute(nest)
+	_ = worker.Execute(nest)
 
 	// Read stats and verify
 	data, _ := os.ReadFile(statsPath)
 	var stats DatabaseStatistics
-	json.Unmarshal(data, &stats)
+	_ = json.Unmarshal(data, &stats)
 
 	if stats.VectorCount != int64(vectorCount) {
 		t.Errorf("vector count mismatch: got %d, want %d", stats.VectorCount, vectorCount)
@@ -1469,7 +1472,7 @@ func TestStatisticsWorkerWithHighLoad(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
-				nest.Store(fmt.Sprintf("doc-%d-%d", id, j), make([]float32, 128))
+				_ = nest.Store(fmt.Sprintf("doc-%d-%d", id, j), make([]float32, 128))
 			}
 		}(i)
 	}
@@ -1517,12 +1520,12 @@ func TestCompressionWorkerIdentifiesColdData(t *testing.T) {
 	// Add vectors
 	for i := 0; i < 10; i++ {
 		id := fmt.Sprintf("vec%d", i)
-		nest.Store(id, make([]float32, 128))
+		_ = nest.Store(id, make([]float32, 128))
 	}
 
 	// Access some vectors (make them "hot")
-	nest.Get("vec0")
-	nest.Get("vec1")
+	_, _ = nest.Get("vec0")
+	_, _ = nest.Get("vec1")
 
 	// Wait a bit
 	time.Sleep(100 * time.Millisecond)
@@ -1548,7 +1551,7 @@ func TestCompressionWorkerCompressesVectors(t *testing.T) {
 		for j := range vec {
 			vec[j] = float32(i + j)
 		}
-		nest.Store(id, vec)
+		_ = nest.Store(id, vec)
 	}
 
 	worker := NewCompressionWorker(1*time.Second, 0) // Immediate compression
@@ -1616,12 +1619,12 @@ func TestCompressionWorkerWithSearches(t *testing.T) {
 		for j := range vec {
 			vec[j] = float32(i+j) * 0.01
 		}
-		nest.Store(fmt.Sprintf("vec%d", i), vec)
+		_ = nest.Store(fmt.Sprintf("vec%d", i), vec)
 	}
 
 	// Run compression worker
 	worker := NewCompressionWorker(1*time.Second, 0)
-	worker.Execute(nest)
+	_ = worker.Execute(nest)
 
 	// Verify searches still work
 	query := make([]float32, 128)

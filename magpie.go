@@ -313,7 +313,7 @@ func (n *Nest) Store(id string, vector []float32, metadata ...map[string]interfa
 	if err := n.index.Add(id, vector); err != nil {
 		// If already exists, update it
 		if err.Error() == fmt.Sprintf("vector with ID %s already exists", id) {
-			n.index.Remove(id)
+			_ = n.index.Remove(id)
 			if err := n.index.Add(id, vector); err != nil {
 				return fmt.Errorf("failed to update vector: %w", err)
 			}
@@ -328,7 +328,7 @@ func (n *Nest) Store(id string, vector []float32, metadata ...map[string]interfa
 	// Write to storage
 	if err := n.storeVector(id, vector, meta); err != nil {
 		// Rollback index change
-		n.index.Remove(id)
+		_ = n.index.Remove(id)
 		n.header.VectorCount--
 		return fmt.Errorf("failed to write vector: %w", err)
 	}
@@ -341,7 +341,7 @@ func (n *Nest) Store(id string, vector []float32, metadata ...map[string]interfa
 		tx := n.mvcc.BeginTx()
 		version := n.mvcc.CreateVersion(tx.ID, id, vector, meta)
 		n.mvcc.AddVersion(id, version)
-		n.mvcc.CommitTx(tx)
+		_ = n.mvcc.CommitTx(tx)
 	}
 
 	// Update header on disk
@@ -856,7 +856,7 @@ func (n *Nest) storeVector(id string, vector []float32, metadata map[string]inte
 	// 2. Serialize metadata to JSON (if present)
 	var metaJSON []byte
 	var metaPageNum uint64
-	if metadata != nil && len(metadata) > 0 {
+	if len(metadata) > 0 {
 		var err error
 		metaJSON, err = json.Marshal(metadata)
 		if err != nil {

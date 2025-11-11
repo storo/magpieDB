@@ -17,7 +17,7 @@ func TestMVCCGetVisibleVersionRaceCondition(t *testing.T) {
 	tx1 := manager.BeginTx()
 	version1 := manager.CreateVersion(tx1.ID, "vec1", []float32{1.0, 2.0, 3.0}, map[string]interface{}{"tag": "v1"})
 	manager.AddVersion("vec1", version1)
-	manager.CommitTx(tx1)
+	_ = manager.CommitTx(tx1)
 
 	// Create multiple concurrent readers and writers
 	var wg sync.WaitGroup
@@ -41,7 +41,7 @@ func TestMVCCGetVisibleVersionRaceCondition(t *testing.T) {
 					_ = version.NextVersion  // Accessing next pointer - race condition!
 				}
 
-				manager.CommitTx(tx)
+				_ = manager.CommitTx(tx)
 				time.Sleep(time.Microsecond)
 			}
 		}(i)
@@ -62,7 +62,7 @@ func TestMVCCGetVisibleVersionRaceCondition(t *testing.T) {
 					map[string]interface{}{"writer": writerID, "iter": j})
 
 				manager.AddVersion("vec1", newVersion)
-				manager.CommitTx(tx)
+				_ = manager.CommitTx(tx)
 
 				time.Sleep(time.Microsecond)
 			}
@@ -93,7 +93,7 @@ func TestMVCCGetVisibleVersionReturnsDeepCopy(t *testing.T) {
 	originalMetadata := map[string]interface{}{"tag": "original"}
 	version1 := manager.CreateVersion(tx1.ID, "vec1", originalVector, originalMetadata)
 	manager.AddVersion("vec1", version1)
-	manager.CommitTx(tx1)
+	_ = manager.CommitTx(tx1)
 
 	// Get visible version
 	tx2 := manager.BeginTx()
@@ -138,7 +138,7 @@ func TestMVCCGetVisibleVersionReturnsDeepCopy(t *testing.T) {
 		}
 	}
 
-	manager.CommitTx(tx2)
+	_ = manager.CommitTx(tx2)
 }
 
 // TestMVCCGetVisibleVersionWithConcurrentGC tests GetVisibleVersion
@@ -154,7 +154,7 @@ func TestMVCCGetVisibleVersionWithConcurrentGC(t *testing.T) {
 			[]float32{float32(i), float32(i+1), float32(i+2)},
 			map[string]interface{}{"version": i})
 		manager.AddVersion("vec1", version)
-		manager.CommitTx(tx)
+		_ = manager.CommitTx(tx)
 	}
 
 	var wg sync.WaitGroup
@@ -184,7 +184,7 @@ func TestMVCCGetVisibleVersionWithConcurrentGC(t *testing.T) {
 					}
 				}
 
-				manager.CommitTx(tx)
+				_ = manager.CommitTx(tx)
 			}
 		}()
 	}
@@ -221,7 +221,7 @@ func TestMVCCVersionIsolationAfterModification(t *testing.T) {
 	tx1 := manager.BeginTx()
 	version1 := manager.CreateVersion(tx1.ID, "vec1", []float32{1.0, 2.0}, map[string]interface{}{"v": 1})
 	manager.AddVersion("vec1", version1)
-	manager.CommitTx(tx1)
+	_ = manager.CommitTx(tx1)
 
 	// Start transaction and get version
 	tx2 := manager.BeginTx()
@@ -239,7 +239,7 @@ func TestMVCCVersionIsolationAfterModification(t *testing.T) {
 	tx3 := manager.BeginTx()
 	version2 := manager.CreateVersion(tx3.ID, "vec1", []float32{99.0, 99.0}, map[string]interface{}{"v": 2})
 	manager.AddVersion("vec1", version2)
-	manager.CommitTx(tx3)
+	_ = manager.CommitTx(tx3)
 
 	// The retrieved version should still be valid and unchanged
 	for i, v := range retrieved.Vector {
@@ -256,5 +256,5 @@ func TestMVCCVersionIsolationAfterModification(t *testing.T) {
 		t.Error("Metadata was corrupted")
 	}
 
-	manager.CommitTx(tx2)
+	_ = manager.CommitTx(tx2)
 }
