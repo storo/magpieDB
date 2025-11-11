@@ -315,6 +315,7 @@ type PeriodicTask struct {
 	pool     *WorkerPool
 	ctx      context.Context
 	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 }
 
 // NewPeriodicTask creates a new periodic task
@@ -331,7 +332,9 @@ func NewPeriodicTask(task Task, interval time.Duration, pool *WorkerPool) *Perio
 
 // Start begins running the task periodically
 func (pt *PeriodicTask) Start() {
+	pt.wg.Add(1)
 	go func() {
+		defer pt.wg.Done()
 		ticker := time.NewTicker(pt.interval)
 		defer ticker.Stop()
 
@@ -350,4 +353,5 @@ func (pt *PeriodicTask) Start() {
 // Stop stops the periodic task
 func (pt *PeriodicTask) Stop() {
 	pt.cancel()
+	pt.wg.Wait()
 }
