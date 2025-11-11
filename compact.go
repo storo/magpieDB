@@ -135,7 +135,8 @@ func (n *Nest) CompactInternal() error {
 		if err := n.storage.Close(); err != nil {
 			return fmt.Errorf("failed to close storage: %w", err)
 		}
-		n.file = nil // File is closed by storage, set to nil to avoid double-close
+		n.storage = nil // Clear storage reference after close
+		n.file = nil    // File is owned by storage, set to nil to avoid double-close
 	}
 
 	// 7. Close temp file

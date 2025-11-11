@@ -86,9 +86,22 @@ func (s *Storage) AllocatePage() (uint64, error) {
 }
 
 // Close flushes the buffer and closes the file.
+// This method is idempotent - it can be called multiple times safely.
+// Subsequent calls after the first successful close are no-ops.
+//
+// OWNERSHIP MODEL (Issue #6 Fix):
+// - Storage owns the file descriptor passed to Init()
+// - Only Storage.Close() should close the file
+// - Other components (e.g., Nest) should not close the file directly
 func (s *Storage) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// IDEMPOTENCY GUARD: If already closed, return immediately (no error)
+	// A storage is considered closed when both file and mmap are nil
+	if s.file == nil && s.mmap == nil {
+		return nil
+	}
 
 	var errs []error
 
@@ -111,7 +124,7 @@ func (s *Storage) Close() error {
 	}
 
 	if len(errs) > 0 {
-		return errs[0] // Return first error
+		return fmt.Errorf("close errors: %v", errs)
 	}
 
 	return nil

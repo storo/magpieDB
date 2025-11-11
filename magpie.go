@@ -602,10 +602,13 @@ func (n *Nest) Close() error {
 	}
 
 	// Close storage (unmaps memory and closes file)
+	// Storage owns the file descriptor, so this also closes n.file
 	if n.storage != nil {
 		if err := n.storage.Close(); err != nil {
 			return fmt.Errorf("failed to close storage: %w", err)
 		}
+		n.storage = nil
+		n.file = nil // Owned by storage, set to nil for safety
 	}
 
 	// Close WAL after all data is persisted
