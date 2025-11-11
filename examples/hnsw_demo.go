@@ -10,7 +10,7 @@ import (
 
 func main() {
 	fmt.Println("MagpieDB HNSW Index Demo")
-	fmt.Println("========================\n")
+	fmt.Println("========================")
 
 	// Create HNSW index with M=16, efConstruction=200
 	fmt.Println("Creating HNSW index (dim=128, M=16, efConstruction=200)...")

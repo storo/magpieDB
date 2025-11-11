@@ -10,7 +10,7 @@ import (
 
 func main() {
 	fmt.Println("MagpieDB Metadata Filtering Example")
-	fmt.Println("====================================\n")
+	fmt.Println("====================================")
 
 	// Open database
 	nest, err := magpie.Open("./metadata_example.magpie", magpie.Options{

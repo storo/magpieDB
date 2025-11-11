@@ -84,12 +84,6 @@ func (w *WAL) Append(entry WALEntry) error {
 
 	entry.Checksum = crc32.ChecksumIEEE(data)
 
-	// Re-serialize with checksum
-	_, err = w.serializeEntry(&entry)
-	if err != nil {
-		return fmt.Errorf("failed to serialize entry: %w", err)
-	}
-
 	// Buffer the entry
 	w.buffer = append(w.buffer, entry)
 

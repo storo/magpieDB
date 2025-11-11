@@ -285,6 +285,8 @@ func TestBatchPreallocation(t *testing.T) {
 
 // TestBatchOOMHandling tests behavior under memory pressure
 func TestBatchOOMHandling(t *testing.T) {
+	t.Skip("Test requires >40GB RAM and exceeds page size limits. Run manually on high-memory systems.")
+
 	if testing.Short() {
 		t.Skip("Skipping OOM test in short mode")
 	}

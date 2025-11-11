@@ -9,7 +9,7 @@ import (
 
 func main() {
 	fmt.Println("MagpieDB Basic Example")
-	fmt.Println("======================\n")
+	fmt.Println("======================")
 
 	// Open or create database
 	nest, err := magpie.Open("./example.magpie")
