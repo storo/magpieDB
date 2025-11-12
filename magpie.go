@@ -421,11 +421,28 @@ func (n *Nest) Find(query []float32, k int) []Treasure {
 // FindWithFilter searches for similar vectors that match the provided filter.
 // This allows combining vector similarity with metadata constraints.
 //
+// Implementation uses a search-then-filter strategy:
+// 1. Search for k*oversampleFactor candidates (default 3x)
+// 2. Apply filter to candidates
+// 3. Return top k filtered results
+//
+// This approach balances performance and recall. For very selective filters
+// (< 10% match rate), consider using multiple calls with higher oversample.
+//
 // Example:
 //
-//	filter := &magpie.SimpleFilter{Key: "category", Value: "tutorial"}
+//	filter := magpie.Eq("category", "tutorial")
 //	results := nest.FindWithFilter(query, 10, filter)
 func (n *Nest) FindWithFilter(query []float32, k int, filter Filter) []Treasure {
+	start := time.Now()
+	defer func() {
+		n.trackSearch(time.Since(start))
+	}()
+
+	// Check cache first (before acquiring lock)
+	// Note: Caching with filters is disabled due to filter serialization complexity
+	// Future: implement filter.Hash() interface for cache key generation
+
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
@@ -433,11 +450,58 @@ func (n *Nest) FindWithFilter(query []float32, k int, filter Filter) []Treasure 
 		return nil
 	}
 
-	// TODO: Search with filter
-	// Consider: filter before or after search?
-	// Trade-off: accuracy vs performance
+	// Validate dimensions
+	if len(query) != int(n.header.Dimensions) {
+		return nil
+	}
 
-	return nil
+	// If no filter, use standard Find logic
+	if filter == nil {
+		// Release lock, call Find which will re-acquire
+		n.mu.RUnlock()
+		results := n.Find(query, k)
+		n.mu.RLock()
+		return results
+	}
+
+	// Search-then-filter strategy
+	// Oversample by 3x to compensate for filtering
+	const oversampleFactor = 3
+	candidateK := k * oversampleFactor
+
+	// Search HNSW index for candidates
+	candidates := n.index.Search(query, candidateK)
+
+	// Load metadata and apply filter
+	filtered := make([]Treasure, 0, k)
+	for _, candidate := range candidates {
+		// Load metadata
+		meta, err := n.loadMetadata(candidate.ID)
+		if err != nil {
+			// Skip if metadata load fails
+			continue
+		}
+
+		// Create treasure with metadata
+		treasure := Treasure{
+			ID:       candidate.ID,
+			Vector:   candidate.Vector,
+			Metadata: meta,
+			Distance: candidate.Distance,
+		}
+
+		// Apply filter
+		if filter.Match(meta) {
+			filtered = append(filtered, treasure)
+
+			// Stop early if we have k results
+			if len(filtered) >= k {
+				break
+			}
+		}
+	}
+
+	return filtered
 }
 
 // Get retrieves a specific vector by ID.
@@ -495,16 +559,57 @@ func (n *Nest) Remove(id string) error {
 		return ErrDatabaseClosed
 	}
 
-	// TODO: Write delete to WAL
-	// TODO: Remove from index
-	// TODO: Mark as deleted in storage
+	// 1. Verify that vector exists in index
+	_, exists := n.index.Get(id)
+	if !exists {
+		return fmt.Errorf("vector %s not found", id)
+	}
 
-	// Invalidate query cache (data changed)
+	// 2. Write delete to WAL for durability
+	if n.wal != nil {
+		entry := WALEntry{
+			Type: WALDelete,
+			ID:   id,
+		}
+		if err := n.wal.Append(entry); err != nil {
+			return fmt.Errorf("failed to write WAL: %w", err)
+		}
+	}
+
+	// 3. If MVCC is enabled, mark version as deleted (soft delete)
+	if n.mvcc != nil {
+		// Get current transaction ID or use a new one
+		// For non-transactional deletes, we use the next transaction ID
+		txID := n.mvcc.txIDCounter + 1
+
+		if err := n.mvcc.DeleteVersion(id, txID); err != nil {
+			// If error is "vector not found" in MVCC, it's okay - vector might only be in index
+			if err != ErrVectorNotFound {
+				return fmt.Errorf("failed to delete MVCC version: %w", err)
+			}
+		}
+	}
+
+	// 4. Remove from HNSW index (hard delete from index)
+	if err := n.index.Remove(id); err != nil {
+		return fmt.Errorf("failed to remove from index: %w", err)
+	}
+
+	// 5. Invalidate query cache (data changed)
 	if n.queryCache != nil {
 		n.queryCache.Invalidate()
 	}
 
-	return fmt.Errorf("not implemented")
+	// 6. Update vector count in header
+	if n.header.VectorCount > 0 {
+		n.header.VectorCount--
+	}
+
+	// 7. TODO: Mark vector as deleted in storage pages (for future compaction)
+	// This will be implemented when compaction is added
+	// For now, the space is simply not reclaimed until compaction
+
+	return nil
 }
 
 // Has checks if a vector with the given ID exists.
