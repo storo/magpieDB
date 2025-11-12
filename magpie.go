@@ -495,16 +495,67 @@ func (n *Nest) Remove(id string) error {
 		return ErrDatabaseClosed
 	}
 
-	// TODO: Write delete to WAL
-	// TODO: Remove from index
-	// TODO: Mark as deleted in storage
+	// 1. Verify that vector exists in index
+	_, exists := n.index.Get(id)
+	if !exists {
+		return fmt.Errorf("vector %s not found", id)
+	}
 
-	// Invalidate query cache (data changed)
+	// 2. Write delete to WAL for durability
+	if n.wal != nil {
+		entry := WALEntry{
+			Type: WALDelete,
+			ID:   id,
+		}
+		if err := n.wal.Append(entry); err != nil {
+			return fmt.Errorf("failed to write WAL: %w", err)
+		}
+	}
+
+	// 3. If MVCC is enabled, mark version as deleted (soft delete)
+	if n.mvcc != nil {
+		// Get current transaction ID or use a new one
+		// For non-transactional deletes, we use the next transaction ID
+		txID := n.mvcc.txIDCounter + 1
+
+		if err := n.mvcc.DeleteVersion(id, txID); err != nil {
+			// If error is "vector not found" in MVCC, it's okay - vector might only be in index
+			if err != ErrVectorNotFound {
+				return fmt.Errorf("failed to delete MVCC version: %w", err)
+			}
+		}
+	}
+
+	// 4. Remove from HNSW index (hard delete from index)
+	if err := n.index.Remove(id); err != nil {
+		return fmt.Errorf("failed to remove from index: %w", err)
+	}
+
+	// 5. Invalidate query cache (data changed)
 	if n.queryCache != nil {
 		n.queryCache.Invalidate()
 	}
 
-	return fmt.Errorf("not implemented")
+	// 6. Mark vector as deleted in storage pages
+	// This prevents it from being re-added during index rebuild
+	if pageNum, exists := n.vectorPages[id]; exists {
+		if err := n.markVectorDeleted(pageNum, id); err != nil {
+			// Log error but don't fail - vector is already removed from index
+			// The space will be reclaimed during compaction
+			// For now, worst case is vector data stays in storage but is not searchable
+			// TODO: Add proper logging when logger is available
+		} else {
+			// Successfully marked as deleted, remove from vectorPages map
+			delete(n.vectorPages, id)
+		}
+	}
+
+	// 7. Update vector count in header
+	if n.header.VectorCount > 0 {
+		n.header.VectorCount--
+	}
+
+	return nil
 }
 
 // Has checks if a vector with the given ID exists.
@@ -571,19 +622,27 @@ func (n *Nest) Close() error {
 	}
 
 	// Persist index before closing
-	if n.index != nil && n.index.Count() > 0 {
-		// Allocate root page if not exists
-		if n.header.IndexRootPage == 0 {
-			rootPage, err := n.storage.AllocatePage()
-			if err != nil {
-				return fmt.Errorf("failed to allocate index root page: %w", err)
+	if n.index != nil {
+		if n.index.Count() > 0 {
+			// Allocate root page if not exists
+			if n.header.IndexRootPage == 0 {
+				rootPage, err := n.storage.AllocatePage()
+				if err != nil {
+					return fmt.Errorf("failed to allocate index root page: %w", err)
+				}
+				n.header.IndexRootPage = rootPage
 			}
-			n.header.IndexRootPage = rootPage
-		}
 
-		// Persist index to pages
-		if err := n.storage.persistIndex(n.index, n.header.IndexRootPage); err != nil {
-			return fmt.Errorf("failed to persist index: %w", err)
+			// Persist index to pages
+			if err := n.storage.persistIndex(n.index, n.header.IndexRootPage); err != nil {
+				return fmt.Errorf("failed to persist index: %w", err)
+			}
+		} else if n.header.IndexRootPage > 0 {
+			// Index is empty, persist empty index to prevent loading stale data
+			// This ensures deleted vectors don't reappear on restart
+			if err := n.storage.persistIndex(n.index, n.header.IndexRootPage); err != nil {
+				return fmt.Errorf("failed to persist empty index: %w", err)
+			}
 		}
 	}
 
